@@ -60,7 +60,7 @@ public class OmniConduitBlockEntity extends BlockEntity {
     private VoxelShape cachedShape = null;
 
     public OmniConduitBlockEntity(BlockPos pos, BlockState state) {
-        super(getType(), pos, state);
+        super(getBlockEntityType(), pos, state);
     }
 
     /**
@@ -70,7 +70,7 @@ public class OmniConduitBlockEntity extends BlockEntity {
         TYPE = type;
     }
 
-    public static BlockEntityType<OmniConduitBlockEntity> getType() {
+    public static BlockEntityType<OmniConduitBlockEntity> getBlockEntityType() {
         if (TYPE == null) {
             throw new IllegalStateException("OmniConduitBlockEntity type not yet registered");
         }
@@ -78,12 +78,13 @@ public class OmniConduitBlockEntity extends BlockEntity {
     }
 
     /**
-     * Called when the block entity is loaded into the world (chunk load, world load).
+     * Called when the block entity is placed into a level (chunk load, world load).
      * Registers all conduit nodes with the network manager to rebuild the graph.
+     * Uses setLevel() instead of onLoad() for vanilla compatibility (onLoad is NeoForge-patched).
      */
     @Override
-    public void onLoad() {
-        super.onLoad();
+    public void setLevel(net.minecraft.world.level.Level level) {
+        super.setLevel(level);
         if (level instanceof ServerLevel serverLevel && !conduitIds.isEmpty()) {
             ConduitNetworkManager.get(serverLevel).onBlockEntityLoaded(this);
         }

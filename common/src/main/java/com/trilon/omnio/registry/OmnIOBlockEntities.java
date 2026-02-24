@@ -25,4 +25,11 @@ public final class OmnIOBlockEntities {
         CONDUIT_BUNDLE = type;
         OmniConduitBlockEntity.setType(type);
     }
+
+    /**
+     * @return the registered block entity type for conduit bundles
+     */
+    public static BlockEntityType<OmniConduitBlockEntity> getConduitBundle() {
+        return CONDUIT_BUNDLE;
+    }
 }

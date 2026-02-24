@@ -1,15 +1,22 @@
 plugins {
     id 'java'
+    id 'net.neoforged.moddev' version '2.0.42-beta'
 }
 
 base {
     archivesName = "${mod_id}-common-${minecraft_version}"
 }
 
+neoForge {
+    neoFormVersion = neo_form_version
+
+    parchment {
+        minecraftVersion = parchment_minecraft_version
+        mappingsVersion = parchment_version
+    }
+}
+
 dependencies {
-    // The common module compiles against NeoForge's artifact because it bundles
-    // Mojang-mapped Minecraft classes. This is the standard MultiLoader Template
-    // approach — common code only uses vanilla MC APIs, not NeoForge-specific ones.
-    // Fabric Loom and ModDevGradle both remap these at build time.
-    compileOnly "net.neoforged:neoforge:${neoforge_version}"
+    // Mixin is bundled by both loaders, safe to compile against in common
+    compileOnly "org.spongepowered:mixin:0.8.5"
 }

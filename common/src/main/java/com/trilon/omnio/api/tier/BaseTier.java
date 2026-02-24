@@ -1,5 +1,6 @@
 package com.trilon.omnio.api.tier;
 
+import com.mojang.serialization.Codec;
 import net.minecraft.ChatFormatting;
 import net.minecraft.util.StringRepresentable;
 
@@ -16,7 +17,7 @@ public enum BaseTier implements StringRepresentable {
     ULTIMATE(3, "ultimate", ChatFormatting.LIGHT_PURPLE),
     CREATIVE(4, "creative", ChatFormatting.GOLD);
 
-    public static final StringRepresentable.EnumCodec<BaseTier> CODEC = StringRepresentable.fromEnum(BaseTier::values);
+    public static final Codec<BaseTier> CODEC = StringRepresentable.fromValues(BaseTier::values);
 
     private final int level;
     private final String serializedName;
