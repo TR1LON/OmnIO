@@ -2,6 +2,7 @@ package com.trilon.omnio.content.conduit;
 
 import com.trilon.omnio.api.conduit.ConnectionStatus;
 import net.minecraft.core.Direction;
+import net.minecraft.core.HolderLookup;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.ListTag;
 import net.minecraft.nbt.Tag;
@@ -91,7 +92,7 @@ public class ConnectionContainer {
     private static final String TAG_CONFIG = "Config";
     private static final String TAG_FILTERS = "Filters";
 
-    public CompoundTag save() {
+    public CompoundTag save(HolderLookup.Provider registries) {
         CompoundTag tag = new CompoundTag();
         ListTag dirList = new ListTag();
         for (Direction dir : Direction.values()) {
@@ -102,7 +103,11 @@ public class ConnectionContainer {
             // Save filter slots
             ListTag filtersTag = new ListTag();
             for (ItemStack stack : filterSlots.get(dir)) {
-                filtersTag.add(stack.isEmpty() ? new CompoundTag() : stack.save(null));
+                if (stack.isEmpty()) {
+                    filtersTag.add(new CompoundTag());
+                } else {
+                    filtersTag.add((Tag) stack.save(registries));
+                }
             }
             dirTag.put(TAG_FILTERS, filtersTag);
 
@@ -112,7 +117,7 @@ public class ConnectionContainer {
         return tag;
     }
 
-    public static ConnectionContainer load(CompoundTag tag) {
+    public static ConnectionContainer load(CompoundTag tag, HolderLookup.Provider registries) {
         ConnectionContainer container = new ConnectionContainer();
         ListTag dirList = tag.getList("Directions", Tag.TAG_COMPOUND);
         for (int i = 0; i < dirList.size(); i++) {
@@ -127,8 +132,8 @@ public class ConnectionContainer {
                 for (int j = 0; j < Math.min(filtersTag.size(), FILTER_SLOTS); j++) {
                     CompoundTag itemTag = filtersTag.getCompound(j);
                     if (!itemTag.isEmpty()) {
-                        // TODO: Proper ItemStack deserialization for 1.21.1
-                        // slots[j] = ItemStack.of(itemTag);
+                        final int slot = j;
+                        ItemStack.parse(registries, itemTag).ifPresent(parsed -> slots[slot] = parsed);
                     }
                 }
             }

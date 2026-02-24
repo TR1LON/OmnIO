@@ -92,19 +92,30 @@ public class ConnectionConfig implements IConnectionConfig {
 
     public CompoundTag save() {
         CompoundTag tag = new CompoundTag();
-        tag.putInt(TAG_STATUS, status.ordinal());
-        tag.putInt(TAG_TRANSFER_MODE, transferMode.ordinal());
+        tag.putString(TAG_STATUS, status.name());
+        tag.putString(TAG_TRANSFER_MODE, transferMode.name());
         tag.putInt(TAG_PRIORITY, priority);
-        tag.putInt(TAG_REDSTONE_MODE, redstoneMode.ordinal());
+        tag.putString(TAG_REDSTONE_MODE, redstoneMode.name());
         return tag;
     }
 
     public static ConnectionConfig load(CompoundTag tag) {
-        ConnectionStatus status = ConnectionStatus.values()[tag.getInt(TAG_STATUS)];
-        TransferMode transferMode = TransferMode.values()[tag.getInt(TAG_TRANSFER_MODE)];
+        ConnectionStatus status = safeEnum(ConnectionStatus.class, tag.getString(TAG_STATUS), ConnectionStatus.DISCONNECTED);
+        TransferMode transferMode = safeEnum(TransferMode.class, tag.getString(TAG_TRANSFER_MODE), TransferMode.DISABLED);
         int priority = tag.getInt(TAG_PRIORITY);
-        RedstoneMode redstoneMode = RedstoneMode.values()[tag.getInt(TAG_REDSTONE_MODE)];
+        RedstoneMode redstoneMode = safeEnum(RedstoneMode.class, tag.getString(TAG_REDSTONE_MODE), RedstoneMode.ALWAYS_ACTIVE);
         return new ConnectionConfig(status, transferMode, priority, redstoneMode);
+    }
+
+    /**
+     * Safely parse an enum from a string name, returning a fallback if the name is invalid.
+     */
+    private static <E extends Enum<E>> E safeEnum(Class<E> enumClass, String name, E fallback) {
+        try {
+            return Enum.valueOf(enumClass, name);
+        } catch (IllegalArgumentException | NullPointerException e) {
+            return fallback;
+        }
     }
 
     /**

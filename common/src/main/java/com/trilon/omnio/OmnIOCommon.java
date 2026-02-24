@@ -1,10 +1,5 @@
 package com.trilon.omnio;
 
-import com.trilon.omnio.registry.OmnIOBlocks;
-import com.trilon.omnio.registry.OmnIOBlockEntities;
-import com.trilon.omnio.registry.OmnIOCreativeTabs;
-import com.trilon.omnio.registry.OmnIOItems;
-
 /**
  * Common initialization logic shared between all loader platforms.
  * Each platform entry point (NeoForge, Fabric) calls {@link #init()} during mod loading.

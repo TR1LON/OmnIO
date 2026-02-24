@@ -2,7 +2,6 @@ package com.trilon.omnio.content.conduit;
 
 import com.trilon.omnio.Constants;
 import com.trilon.omnio.api.conduit.ConnectionStatus;
-import com.trilon.omnio.api.conduit.IConduit;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.core.HolderLookup;
@@ -12,6 +11,7 @@ import net.minecraft.nbt.Tag;
 import net.minecraft.network.protocol.Packet;
 import net.minecraft.network.protocol.game.ClientGamePacketListener;
 import net.minecraft.network.protocol.game.ClientboundBlockEntityDataPacket;
+import net.minecraft.resources.ResourceLocation;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.entity.BlockEntityType;
@@ -39,15 +39,16 @@ public class OmniConduitBlockEntity extends BlockEntity {
     private static BlockEntityType<OmniConduitBlockEntity> TYPE;
 
     /**
-     * Ordered list of conduit IDs present in this bundle.
-     * Each ID is a ResourceLocation string like "omnio:energy_basic", "omnio:fluid_advanced", etc.
+     * Ordered set of conduit IDs present in this bundle.
+     * Each ID is a ResourceLocation like "omnio:energy_conduit_basic".
+     * LinkedHashSet preserves insertion order and provides O(1) contains().
      */
-    private final List<String> conduitIds = new ArrayList<>();
+    private final Set<ResourceLocation> conduitIds = new LinkedHashSet<>();
 
     /**
-     * Per-conduit connection data. Key = conduit ID string.
+     * Per-conduit connection data. Key = conduit ResourceLocation ID.
      */
-    private final Map<String, ConnectionContainer> connections = new LinkedHashMap<>();
+    private final Map<ResourceLocation, ConnectionContainer> connections = new LinkedHashMap<>();
 
     /**
      * Cached VoxelShape, rebuilt when connections change.
@@ -77,8 +78,8 @@ public class OmniConduitBlockEntity extends BlockEntity {
     /**
      * @return unmodifiable view of the conduit IDs in this bundle
      */
-    public List<String> getConduitIds() {
-        return Collections.unmodifiableList(conduitIds);
+    public Set<ResourceLocation> getConduitIds() {
+        return Collections.unmodifiableSet(conduitIds);
     }
 
     /**
@@ -92,19 +93,34 @@ public class OmniConduitBlockEntity extends BlockEntity {
      * @param conduitId the conduit ID to check
      * @return true if this bundle contains the given conduit
      */
-    public boolean hasConduit(String conduitId) {
+    public boolean hasConduit(ResourceLocation conduitId) {
         return conduitIds.contains(conduitId);
+    }
+
+    /**
+     * Convenience overload accepting a string ID.
+     */
+    public boolean hasConduit(String conduitId) {
+        return hasConduit(ResourceLocation.parse(conduitId));
     }
 
     /**
      * Add a conduit to this bundle.
      *
-     * @param conduitId the ID of the conduit to add (e.g., "omnio:energy_basic")
+     * @param conduitId the ID of the conduit to add (e.g., "omnio:energy_conduit_basic")
      * @return true if the conduit was added, false if the bundle is full or already contains it
      */
-    public boolean addConduit(String conduitId) {
+    public boolean addConduit(ResourceLocation conduitId) {
         if (conduitIds.size() >= Constants.MAX_CONDUITS_PER_BUNDLE || conduitIds.contains(conduitId)) {
             return false;
+        }
+
+        // Reject adding a conduit of the same type-category but different tier
+        String conduitType = extractConduitType(conduitId);
+        for (ResourceLocation existing : conduitIds) {
+            if (extractConduitType(existing).equals(conduitType)) {
+                return false; // Same type already present (different tier) — use break-and-replace
+            }
         }
 
         conduitIds.add(conduitId);
@@ -122,12 +138,39 @@ public class OmniConduitBlockEntity extends BlockEntity {
     }
 
     /**
+     * Convenience overload accepting a string ID.
+     */
+    public boolean addConduit(String conduitId) {
+        return addConduit(ResourceLocation.parse(conduitId));
+    }
+
+    /**
+     * Extract the conduit type category from a conduit ID.
+     * E.g., "omnio:energy_conduit_basic" → "energy_conduit",
+     *        "omnio:fluid_conduit_advanced" → "fluid_conduit",
+     *        "omnio:redstone_conduit" → "redstone_conduit"
+     * Strips the last underscore-separated tier suffix if it matches a known tier.
+     */
+    private static String extractConduitType(ResourceLocation conduitId) {
+        String path = conduitId.getPath();
+        // Known tier suffixes to strip
+        int lastUnderscore = path.lastIndexOf('_');
+        if (lastUnderscore > 0) {
+            String suffix = path.substring(lastUnderscore + 1);
+            if (suffix.equals("basic") || suffix.equals("advanced") || suffix.equals("elite") || suffix.equals("ultimate")) {
+                return path.substring(0, lastUnderscore);
+            }
+        }
+        return path;
+    }
+
+    /**
      * Remove a conduit from this bundle.
      *
      * @param conduitId the ID of the conduit to remove
      * @return true if the conduit was removed
      */
-    public boolean removeConduit(String conduitId) {
+    public boolean removeConduit(ResourceLocation conduitId) {
         if (!conduitIds.remove(conduitId)) {
             return false;
         }
@@ -152,7 +195,7 @@ public class OmniConduitBlockEntity extends BlockEntity {
      * @return the connection container for the given conduit, or null if not present
      */
     @Nullable
-    public ConnectionContainer getConnectionContainer(String conduitId) {
+    public ConnectionContainer getConnectionContainer(ResourceLocation conduitId) {
         return connections.get(conduitId);
     }
 
@@ -162,7 +205,7 @@ public class OmniConduitBlockEntity extends BlockEntity {
      * Evaluate all 6 neighbor positions for a specific conduit type to determine
      * connection status (conduit-to-conduit, conduit-to-block, or disconnected).
      */
-    private void evaluateConnections(String conduitId) {
+    private void evaluateConnections(ResourceLocation conduitId) {
         if (level == null) return;
 
         ConnectionContainer container = connections.get(conduitId);
@@ -176,7 +219,7 @@ public class OmniConduitBlockEntity extends BlockEntity {
     /**
      * Evaluate a single direction for a specific conduit.
      */
-    private void evaluateConnection(String conduitId, ConnectionContainer container, Direction dir) {
+    private void evaluateConnection(ResourceLocation conduitId, ConnectionContainer container, Direction dir) {
         if (level == null) return;
 
         BlockPos neighborPos = getBlockPos().relative(dir);
@@ -212,7 +255,7 @@ public class OmniConduitBlockEntity extends BlockEntity {
      * Re-evaluates connections for all conduits on the affected side.
      */
     public void onNeighborChanged(Direction direction, BlockState neighborState, BlockPos neighborPos) {
-        for (String conduitId : conduitIds) {
+        for (ResourceLocation conduitId : conduitIds) {
             ConnectionContainer container = connections.get(conduitId);
             if (container != null) {
                 evaluateConnection(conduitId, container, direction);
@@ -235,7 +278,7 @@ public class OmniConduitBlockEntity extends BlockEntity {
             BlockEntity neighborBE = level.getBlockEntity(neighborPos);
             if (neighborBE instanceof OmniConduitBlockEntity neighborBundle) {
                 Direction opposite = dir.getOpposite();
-                for (String conduitId : conduitIds) {
+                for (ResourceLocation conduitId : conduitIds) {
                     ConnectionContainer neighborContainer = neighborBundle.getConnectionContainer(conduitId);
                     if (neighborContainer != null) {
                         neighborContainer.disconnect(opposite);
@@ -287,30 +330,30 @@ public class OmniConduitBlockEntity extends BlockEntity {
     @Override
     protected void saveAdditional(CompoundTag tag, HolderLookup.Provider registries) {
         super.saveAdditional(tag, registries);
-        saveConduitData(tag);
+        saveConduitData(tag, registries);
     }
 
     @Override
     protected void loadAdditional(CompoundTag tag, HolderLookup.Provider registries) {
         super.loadAdditional(tag, registries);
-        loadConduitData(tag);
+        loadConduitData(tag, registries);
     }
 
-    private void saveConduitData(CompoundTag tag) {
+    private void saveConduitData(CompoundTag tag, HolderLookup.Provider registries) {
         ListTag conduitList = new ListTag();
-        for (String conduitId : conduitIds) {
+        for (ResourceLocation conduitId : conduitIds) {
             CompoundTag entry = new CompoundTag();
-            entry.putString(TAG_CONDUIT_ID, conduitId);
+            entry.putString(TAG_CONDUIT_ID, conduitId.toString());
             ConnectionContainer container = connections.get(conduitId);
             if (container != null) {
-                entry.put(TAG_CONNECTION, container.save());
+                entry.put(TAG_CONNECTION, container.save(registries));
             }
             conduitList.add(entry);
         }
         tag.put(TAG_CONDUITS, conduitList);
     }
 
-    private void loadConduitData(CompoundTag tag) {
+    private void loadConduitData(CompoundTag tag, HolderLookup.Provider registries) {
         conduitIds.clear();
         connections.clear();
 
@@ -318,11 +361,11 @@ public class OmniConduitBlockEntity extends BlockEntity {
             ListTag conduitList = tag.getList(TAG_CONDUITS, Tag.TAG_COMPOUND);
             for (int i = 0; i < conduitList.size(); i++) {
                 CompoundTag entry = conduitList.getCompound(i);
-                String conduitId = entry.getString(TAG_CONDUIT_ID);
+                ResourceLocation conduitId = ResourceLocation.parse(entry.getString(TAG_CONDUIT_ID));
                 conduitIds.add(conduitId);
 
                 if (entry.contains(TAG_CONNECTION)) {
-                    connections.put(conduitId, ConnectionContainer.load(entry.getCompound(TAG_CONNECTION)));
+                    connections.put(conduitId, ConnectionContainer.load(entry.getCompound(TAG_CONNECTION), registries));
                 } else {
                     connections.put(conduitId, new ConnectionContainer());
                 }
@@ -337,7 +380,7 @@ public class OmniConduitBlockEntity extends BlockEntity {
     @Override
     public CompoundTag getUpdateTag(HolderLookup.Provider registries) {
         CompoundTag tag = super.getUpdateTag(registries);
-        saveConduitData(tag);
+        saveConduitData(tag, registries);
         return tag;
     }
 

@@ -1,10 +1,9 @@
 package com.trilon.omnio.content.conduit;
 
 import net.minecraft.world.InteractionResult;
-import net.minecraft.world.item.BlockItem;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
-import net.minecraft.world.item.context.BlockPlaceContext;
+import net.minecraft.world.item.context.UseOnContext;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.core.BlockPos;
@@ -16,8 +15,8 @@ import net.minecraft.world.level.Level;
  *
  * <p>Placement behavior:</p>
  * <ul>
- *   <li>If targeting an empty space → place a new {@link OmniConduitBlock} and add this conduit</li>
  *   <li>If targeting an existing {@link OmniConduitBlock} → add this conduit to the bundle</li>
+ *   <li>If targeting an empty space → place a new {@link OmniConduitBlock} and add this conduit</li>
  * </ul>
  */
 public class ConduitItem extends Item {
@@ -43,12 +42,41 @@ public class ConduitItem extends Item {
         return conduitId;
     }
 
+    @Override
+    public InteractionResult useOn(UseOnContext context) {
+        Level level = context.getLevel();
+        BlockPos clickedPos = context.getClickedPos();
+        BlockState clickedState = level.getBlockState(clickedPos);
+        ItemStack stack = context.getItemInHand();
+
+        // If the target is already a conduit bundle, try to add to it
+        if (clickedState.getBlock() instanceof OmniConduitBlock) {
+            return placeConduit(level, clickedPos, clickedState, stack);
+        }
+
+        // Otherwise, try to place at the adjacent position
+        BlockPos placePos = clickedPos.relative(context.getClickedFace());
+        BlockState placeState = level.getBlockState(placePos);
+
+        // If the adjacent position is also a bundle, add to it
+        if (placeState.getBlock() instanceof OmniConduitBlock) {
+            return placeConduit(level, placePos, placeState, stack);
+        }
+
+        // If the adjacent position is replaceable, place a new bundle
+        if (placeState.canBeReplaced()) {
+            return placeConduit(level, placePos, placeState, stack);
+        }
+
+        return InteractionResult.FAIL;
+    }
+
     /**
-     * Attempt to place or add a conduit when the player uses this item on a block.
+     * Attempt to place or add a conduit at the given position.
      * If the target is an existing conduit bundle, add to it.
      * Otherwise, place a new bundle block.
      */
-    public InteractionResult placeConduit(Level level, BlockPos pos, BlockState existingState, ItemStack stack) {
+    private InteractionResult placeConduit(Level level, BlockPos pos, BlockState existingState, ItemStack stack) {
         if (level.isClientSide()) {
             return InteractionResult.SUCCESS;
         }

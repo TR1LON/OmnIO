@@ -7,5 +7,9 @@ base {
 }
 
 dependencies {
+    // The common module compiles against NeoForge's artifact because it bundles
+    // Mojang-mapped Minecraft classes. This is the standard MultiLoader Template
+    // approach — common code only uses vanilla MC APIs, not NeoForge-specific ones.
+    // Fabric Loom and ModDevGradle both remap these at build time.
     compileOnly "net.neoforged:neoforge:${neoforge_version}"
 }

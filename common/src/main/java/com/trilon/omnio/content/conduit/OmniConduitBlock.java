@@ -1,6 +1,5 @@
 package com.trilon.omnio.content.conduit;
 
-import com.trilon.omnio.Constants;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.world.item.context.BlockPlaceContext;
@@ -9,6 +8,7 @@ import net.minecraft.world.level.Level;
 import net.minecraft.world.level.LevelAccessor;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.EntityBlock;
+import net.minecraft.world.level.block.RenderShape;
 import net.minecraft.world.level.block.SimpleWaterloggedBlock;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.entity.BlockEntityTicker;
@@ -153,6 +153,12 @@ public class OmniConduitBlock extends Block implements EntityBlock, SimpleWaterl
     }
 
     // ---- Rendering ----
+
+    @Override
+    public RenderShape getRenderShape(BlockState state) {
+        // Custom rendering will be handled by BER in Phase 7; suppress default block model
+        return RenderShape.ENTITYBLOCK_ANIMATED;
+    }
 
     @Override
     public boolean propagatesSkylightDown(BlockState state, BlockGetter level, BlockPos pos) {
