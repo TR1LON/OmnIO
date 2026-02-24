@@ -4,6 +4,7 @@ import net.minecraft.world.InteractionResult;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.context.UseOnContext;
+import net.minecraft.resources.ResourceLocation;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.core.BlockPos;
@@ -21,7 +22,7 @@ import net.minecraft.world.level.Level;
  */
 public class ConduitItem extends Item {
 
-    private final String conduitId;
+    private final ResourceLocation conduitId;
     private final Block conduitBlock;
 
     /**
@@ -31,14 +32,14 @@ public class ConduitItem extends Item {
      */
     public ConduitItem(String conduitId, Block conduitBlock, Properties properties) {
         super(properties);
-        this.conduitId = conduitId;
+        this.conduitId = ResourceLocation.parse(conduitId);
         this.conduitBlock = conduitBlock;
     }
 
     /**
      * @return the conduit variant ID this item places
      */
-    public String getConduitId() {
+    public ResourceLocation getConduitId() {
         return conduitId;
     }
 

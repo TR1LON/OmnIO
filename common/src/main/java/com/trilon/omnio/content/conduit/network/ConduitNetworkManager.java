@@ -109,9 +109,23 @@ public class ConduitNetworkManager {
 
         // Don't re-add if already tracked (e.g., chunk reload)
         if (nodesMap.containsKey(pos)) {
-            // Just refresh the connection data
+            // Refresh the connection data and clear stale neighbor edges
+            // (neighbors may not have loaded yet during chunk reload)
             ConduitNodeImpl existing = nodesMap.get(pos);
+            existing.clearNeighbors();
             existing.syncFromContainer(container);
+
+            // Re-wire neighbor edges for any already-loaded neighbors
+            Set<Direction> conduitDirs = existing.getConduitConnectedDirections();
+            for (Direction dir : Direction.values()) {
+                BlockPos neighborPos = pos.relative(dir);
+                ConduitNodeImpl neighborNode = nodesMap.get(neighborPos);
+                if (neighborNode != null && conduitDirs.contains(dir)) {
+                    existing.setNeighbor(dir, neighborNode);
+                    neighborNode.setNeighbor(dir.getOpposite(), existing);
+                }
+            }
+
             if (existing.getNetwork() != null) {
                 existing.getNetwork().invalidateCaches();
             }
@@ -279,8 +293,10 @@ public class ConduitNetworkManager {
                 }
             }
 
-            // Split the context proportionally
-            if (network.getContext() instanceof ConduitNetworkContext ctx) {
+            // Split the context proportionally — match specific subtype to ensure correct split()
+            if (network.getContext() instanceof EnergyConduitNetworkContext energyCtx) {
+                splitNetwork.setContext(energyCtx.split(fraction));
+            } else if (network.getContext() instanceof ConduitNetworkContext ctx) {
                 splitNetwork.setContext(ctx.split(fraction));
             }
 
@@ -430,7 +446,10 @@ public class ConduitNetworkManager {
                             assigned.add(fragmentPos);
                         }
                     }
-                    if (network.getContext() instanceof ConduitNetworkContext ctx) {
+                    // Match specific subtype to ensure correct split()
+                    if (network.getContext() instanceof EnergyConduitNetworkContext energyCtx) {
+                        splitNetwork.setContext(energyCtx.split(fraction));
+                    } else if (network.getContext() instanceof ConduitNetworkContext ctx) {
                         splitNetwork.setContext(ctx.split(fraction));
                     }
                     Constants.LOG.debug("Split off network {} ({} nodes) from {} for {} (connection change)",

@@ -3,7 +3,6 @@ package com.trilon.omnio.fabric;
 import com.trilon.omnio.Constants;
 import com.trilon.omnio.OmnIOCommon;
 import com.trilon.omnio.content.conduit.network.ConduitNetworkManager;
-import com.trilon.omnio.content.conduit.network.ConduitTypeRegistry;
 import com.trilon.omnio.fabric.registry.FabricRegistration;
 import com.trilon.omnio.fabric.transfer.FabricEnergyTransferHelper;
 import com.trilon.omnio.registry.ConduitTypes;
@@ -31,10 +30,11 @@ public class OmnIOFabric implements ModInitializer {
             }
         });
 
-        // Clear cached network managers and conduit type registry on server stop
+        // Clear cached network managers on server stop.
+        // Note: ConduitTypeRegistry is NOT cleared — types are registered once
+        // during onInitialize which only fires once per game session.
         ServerLifecycleEvents.SERVER_STOPPED.register(server -> {
             ConduitNetworkManager.clearAll();
-            ConduitTypeRegistry.clear();
         });
 
         OmnIOCommon.init();

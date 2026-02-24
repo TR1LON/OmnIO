@@ -178,7 +178,7 @@ public class OmniConduitBlockEntity extends BlockEntity {
         int lastUnderscore = path.lastIndexOf('_');
         if (lastUnderscore > 0) {
             String suffix = path.substring(lastUnderscore + 1);
-            if (suffix.equals("basic") || suffix.equals("advanced") || suffix.equals("elite") || suffix.equals("ultimate")) {
+            if (suffix.equals("basic") || suffix.equals("advanced") || suffix.equals("elite") || suffix.equals("ultimate") || suffix.equals("creative")) {
                 return path.substring(0, lastUnderscore);
             }
         }

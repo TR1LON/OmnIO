@@ -3,7 +3,6 @@ package com.trilon.omnio.neoforge;
 import com.trilon.omnio.Constants;
 import com.trilon.omnio.OmnIOCommon;
 import com.trilon.omnio.content.conduit.network.ConduitNetworkManager;
-import com.trilon.omnio.content.conduit.network.ConduitTypeRegistry;
 import com.trilon.omnio.neoforge.registry.NeoForgeRegistration;
 import com.trilon.omnio.neoforge.transfer.NeoForgeEnergyTransferHelper;
 import com.trilon.omnio.registry.ConduitTypes;
@@ -51,8 +50,11 @@ public class OmnIONeoForge {
     }
 
     private void onServerStopped(ServerStoppedEvent event) {
-        // Clear all cached network managers and conduit type registry to prevent memory leaks
+        // Clear all cached network managers to prevent memory leaks.
+        // Note: ConduitTypeRegistry is NOT cleared here — types are registered once
+        // during FMLCommonSetupEvent which only fires once per game session.
+        // Clearing them would leave the registry empty if a new world is started
+        // without restarting the game.
         ConduitNetworkManager.clearAll();
-        ConduitTypeRegistry.clear();
     }
 }

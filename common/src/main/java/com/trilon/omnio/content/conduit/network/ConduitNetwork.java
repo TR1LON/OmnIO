@@ -3,6 +3,7 @@ package com.trilon.omnio.content.conduit.network;
 import com.trilon.omnio.api.conduit.ConnectionStatus;
 import com.trilon.omnio.api.conduit.IConduitNode;
 import com.trilon.omnio.api.conduit.IConduitType;
+import com.trilon.omnio.content.conduit.type.energy.EnergyConduitNetworkContext;
 import com.trilon.omnio.api.conduit.IConnectionConfig;
 import com.trilon.omnio.api.conduit.network.IConduitNetwork;
 import com.trilon.omnio.api.conduit.network.IConduitNetworkContext;
@@ -29,7 +30,7 @@ import java.util.*;
  */
 public class ConduitNetwork implements IConduitNetwork {
 
-    private static long nextId = 0;
+    private static final java.util.concurrent.atomic.AtomicLong NEXT_ID = new java.util.concurrent.atomic.AtomicLong(0);
 
     private final long id;
     private final IConduitType<?> type;
@@ -63,7 +64,7 @@ public class ConduitNetwork implements IConduitNetwork {
     private boolean cachesDirty = true;
 
     public ConduitNetwork(IConduitType<?> type) {
-        this.id = nextId++;
+        this.id = NEXT_ID.getAndIncrement();
         this.type = type;
         this.context = new ConduitNetworkContext();
     }
@@ -173,8 +174,12 @@ public class ConduitNetwork implements IConduitNetwork {
         }
         other.nodes.clear();
 
-        // Merge contexts
-        if (context instanceof ConduitNetworkContext thisCtx && other.context instanceof ConduitNetworkContext otherCtx) {
+        // Merge contexts — match specific subtypes to ensure type-safe merge
+        if (context instanceof EnergyConduitNetworkContext thisEnergy
+                && other.context instanceof EnergyConduitNetworkContext otherEnergy) {
+            thisEnergy.mergeFrom(otherEnergy);
+        } else if (context instanceof ConduitNetworkContext thisCtx
+                && other.context instanceof ConduitNetworkContext otherCtx) {
             thisCtx.mergeFrom(otherCtx);
         }
 

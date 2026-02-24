@@ -150,7 +150,12 @@ public class ConduitNodeImpl implements IConduitNode {
     public void syncFromContainer(ConnectionContainer container) {
         connectionConfigs.clear();
         for (Direction dir : Direction.values()) {
-            connectionConfigs.put(dir, container.getConfig(dir));
+            // Defensive copy: don't share mutable ConnectionConfig objects with the block entity.
+            // This prevents silent mutation if the BE changes a config after sync.
+            ConnectionConfig original = container.getConfig(dir);
+            connectionConfigs.put(dir, new ConnectionConfig(
+                    original.getStatus(), original.getTransferMode(),
+                    original.getPriority(), original.getRedstoneMode()));
         }
     }
 

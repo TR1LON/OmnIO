@@ -86,8 +86,11 @@ public class EnergyConduitType implements IConduitType<EnergyConduitTier> {
      * Each node contributes the tier's base capacity to the pool.
      */
     public long calculateNetworkCapacity(int nodeCount) {
-        if (tier.getCapacity() == Long.MAX_VALUE) return Long.MAX_VALUE;
-        return tier.getCapacity() * nodeCount;
+        long baseCap = tier.getCapacity();
+        if (baseCap == Long.MAX_VALUE || nodeCount <= 0) return baseCap;
+        // Guard against long overflow: if multiplication would exceed Long.MAX_VALUE, cap it
+        if (nodeCount > Long.MAX_VALUE / baseCap) return Long.MAX_VALUE;
+        return baseCap * nodeCount;
     }
 
     @Override
