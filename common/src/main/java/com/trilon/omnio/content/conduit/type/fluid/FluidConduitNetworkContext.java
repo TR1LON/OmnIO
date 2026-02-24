@@ -5,6 +5,9 @@ import org.jetbrains.annotations.Nullable;
 import com.trilon.omnio.Constants;
 import com.trilon.omnio.content.conduit.network.ConduitNetworkContext;
 
+import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.nbt.CompoundTag;
+import net.minecraft.resources.ResourceLocation;
 import net.minecraft.world.level.material.Fluid;
 import net.minecraft.world.level.material.Fluids;
 
@@ -245,5 +248,54 @@ public class FluidConduitNetworkContext extends ConduitNetworkContext {
     public String toString() {
         String fluidName = storedFluid == Fluids.EMPTY ? "EMPTY" : storedFluid.toString();
         return "FluidContext[" + fluidName + " " + storedAmount + "/" + capacity + " mB]";
+    }
+
+    // ---- NBT Persistence ----
+
+    private static final String TAG_STORED_FLUID = "StoredFluid";
+    private static final String TAG_STORED_AMOUNT = "StoredAmount";
+    private static final String TAG_CAPACITY = "Capacity";
+    private static final String TAG_LOCKED_FLUID = "LockedFluid";
+    private static final String TAG_MANUAL_LOCK = "ManualLock";
+
+    @Override
+    public CompoundTag saveToTag() {
+        CompoundTag tag = new CompoundTag();
+        tag.putInt(TAG_CAPACITY, capacity);
+        tag.putInt(TAG_STORED_AMOUNT, storedAmount);
+        if (storedFluid != Fluids.EMPTY) {
+            ResourceLocation fluidId = BuiltInRegistries.FLUID.getKey(storedFluid);
+            tag.putString(TAG_STORED_FLUID, fluidId.toString());
+        }
+        if (lockedFluid != null && lockedFluid != Fluids.EMPTY) {
+            ResourceLocation lockedId = BuiltInRegistries.FLUID.getKey(lockedFluid);
+            tag.putString(TAG_LOCKED_FLUID, lockedId.toString());
+        }
+        tag.putBoolean(TAG_MANUAL_LOCK, manualLock);
+        return tag;
+    }
+
+    @Override
+    public void loadFromTag(CompoundTag tag) {
+        this.capacity = tag.getInt(TAG_CAPACITY);
+        this.storedAmount = tag.getInt(TAG_STORED_AMOUNT);
+
+        if (tag.contains(TAG_STORED_FLUID)) {
+            ResourceLocation fluidId = ResourceLocation.parse(tag.getString(TAG_STORED_FLUID));
+            this.storedFluid = BuiltInRegistries.FLUID.get(fluidId);
+            if (this.storedFluid == null) this.storedFluid = Fluids.EMPTY;
+        } else {
+            this.storedFluid = Fluids.EMPTY;
+        }
+
+        if (tag.contains(TAG_LOCKED_FLUID)) {
+            ResourceLocation lockedId = ResourceLocation.parse(tag.getString(TAG_LOCKED_FLUID));
+            this.lockedFluid = BuiltInRegistries.FLUID.get(lockedId);
+        } else {
+            this.lockedFluid = null;
+        }
+
+        this.manualLock = tag.getBoolean(TAG_MANUAL_LOCK);
+        this.storedAmount = Math.min(this.storedAmount, this.capacity);
     }
 }

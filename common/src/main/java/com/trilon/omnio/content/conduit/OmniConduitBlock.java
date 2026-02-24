@@ -1,14 +1,22 @@
 package com.trilon.omnio.content.conduit;
 
+import com.trilon.omnio.api.conduit.ConnectionStatus;
+import com.trilon.omnio.platform.IPlatformHelper;
+
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.InteractionHand;
+import net.minecraft.world.ItemInteractionResult;
+import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.context.BlockPlaceContext;
 import net.minecraft.world.level.BlockGetter;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.LevelAccessor;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.EntityBlock;
-import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.block.RenderShape;
 import net.minecraft.world.level.block.SimpleWaterloggedBlock;
 import net.minecraft.world.level.block.entity.BlockEntity;
@@ -20,9 +28,11 @@ import net.minecraft.world.level.block.state.properties.BlockStateProperties;
 import net.minecraft.world.level.block.state.properties.BooleanProperty;
 import net.minecraft.world.level.material.FluidState;
 import net.minecraft.world.level.material.Fluids;
+import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.shapes.CollisionContext;
 import net.minecraft.world.phys.shapes.Shapes;
 import net.minecraft.world.phys.shapes.VoxelShape;
+
 import org.jetbrains.annotations.Nullable;
 
 /**
@@ -91,6 +101,50 @@ public class OmniConduitBlock extends Block implements EntityBlock, SimpleWaterl
             shape = Shapes.or(shape, CONNECTOR_SHAPES[dir.get3DDataValue()]);
         }
         return shape;
+    }
+
+    // ---- Interaction ----
+
+    @Override
+    protected ItemInteractionResult useItemOn(ItemStack stack, BlockState state, Level level,
+                                              BlockPos pos, Player player, InteractionHand hand,
+                                              BlockHitResult hitResult) {
+        // Allow ConduitItem placement to pass through to Item.useOn
+        if (stack.getItem() instanceof ConduitItem) {
+            return ItemInteractionResult.PASS_TO_DEFAULT_BLOCK_INTERACTION;
+        }
+
+        // Only open the GUI when clicking a pad (a face with a block connection).
+        // Clicking the cable body itself does nothing useful.
+        // Determine which pad was hit using position, not face normal — the adjacent
+        // block normally prevents clicking the outward face, so the player clicks
+        // from an angle and getDirection() returns the wrong face.
+        BlockEntity be = level.getBlockEntity(pos);
+        if (be instanceof OmniConduitBlockEntity conduitBE) {
+            double lx = hitResult.getLocation().x - pos.getX();
+            double ly = hitResult.getLocation().y - pos.getY();
+            double lz = hitResult.getLocation().z - pos.getZ();
+            Direction padDir = ConduitShape.hitTestPad(lx, ly, lz);
+
+            if (padDir != null) {
+                // Verify that this direction actually has a CONNECTED_BLOCK pad
+                boolean hasPad = false;
+                for (var slot : conduitBE.getSortedSlots()) {
+                    ConnectionContainer container = conduitBE.getConnectionContainer(slot);
+                    if (container != null && container.getStatus(padDir) == ConnectionStatus.CONNECTED_BLOCK) {
+                        hasPad = true;
+                        break;
+                    }
+                }
+                if (hasPad) {
+                    if (!level.isClientSide() && player instanceof ServerPlayer serverPlayer) {
+                        IPlatformHelper.INSTANCE.openConduitScreen(serverPlayer, conduitBE, padDir);
+                    }
+                    return ItemInteractionResult.sidedSuccess(level.isClientSide());
+                }
+            }
+        }
+        return ItemInteractionResult.PASS_TO_DEFAULT_BLOCK_INTERACTION;
     }
 
     // ---- Block Entity ----

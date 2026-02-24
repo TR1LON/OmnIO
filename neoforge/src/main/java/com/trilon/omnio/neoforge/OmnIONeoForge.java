@@ -3,6 +3,7 @@ package com.trilon.omnio.neoforge;
 import com.trilon.omnio.Constants;
 import com.trilon.omnio.OmnIOCommon;
 import com.trilon.omnio.content.conduit.network.ConduitNetworkManager;
+import com.trilon.omnio.neoforge.client.OmnIONeoForgeClient;
 import com.trilon.omnio.neoforge.registry.NeoForgeRegistration;
 import com.trilon.omnio.neoforge.transfer.NeoForgeEnergyTransferHelper;
 import com.trilon.omnio.neoforge.transfer.NeoForgeFluidTransferHelper;
@@ -11,6 +12,7 @@ import com.trilon.omnio.registry.ConduitTypes;
 import net.neoforged.bus.api.IEventBus;
 import net.neoforged.fml.common.Mod;
 import net.neoforged.fml.event.lifecycle.FMLCommonSetupEvent;
+import net.neoforged.fml.loading.FMLEnvironment;
 import net.neoforged.neoforge.common.NeoForge;
 import net.minecraft.server.level.ServerLevel;
 import net.neoforged.neoforge.event.server.ServerStoppedEvent;
@@ -35,6 +37,11 @@ public class OmnIONeoForge {
         NeoForge.EVENT_BUS.addListener(this::onServerStopped);
         NeoForge.EVENT_BUS.addListener(this::onChunkLoad);
         NeoForge.EVENT_BUS.addListener(this::onChunkUnload);
+
+        // Client-side rendering registration (only on physical client)
+        if (FMLEnvironment.dist.isClient()) {
+            OmnIONeoForgeClient.init(modEventBus);
+        }
 
         OmnIOCommon.init();
         Constants.LOG.info("{} initialized on NeoForge", Constants.MOD_NAME);

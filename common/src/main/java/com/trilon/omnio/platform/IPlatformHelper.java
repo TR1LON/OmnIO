@@ -1,5 +1,9 @@
 package com.trilon.omnio.platform;
 
+import com.trilon.omnio.content.conduit.OmniConduitBlockEntity;
+import net.minecraft.core.Direction;
+import net.minecraft.server.level.ServerPlayer;
+
 import java.util.ServiceLoader;
 
 /**
@@ -32,4 +36,15 @@ public interface IPlatformHelper {
      * @return true if the current environment is a development (non-production) environment
      */
     boolean isDevelopmentEnvironment();
+
+    /**
+     * Open the conduit configuration GUI for a player.
+     * Platform-specific because NeoForge and Fabric use different APIs to send
+     * extra data (BlockPos + initial face) with the menu-open packet.
+     *
+     * @param player the server player to open the screen for
+     * @param be     the conduit block entity to configure
+     * @param clickedFace the face that was clicked (pre-selects that face in the GUI)
+     */
+    void openConduitScreen(ServerPlayer player, OmniConduitBlockEntity be, Direction clickedFace);
 }

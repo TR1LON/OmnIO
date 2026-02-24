@@ -1,0 +1,10 @@
+{
+  "variants": {
+    "waterlogged=false": {
+      "model": "omnio:block/conduit_bundle"
+    },
+    "waterlogged=true": {
+      "model": "omnio:block/conduit_bundle"
+    }
+  }
+}

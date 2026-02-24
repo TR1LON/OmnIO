@@ -1,15 +1,17 @@
 package com.trilon.omnio.content.conduit;
 
+import java.util.ArrayList;
 import java.util.Collections;
-import java.util.EnumSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
 import org.jetbrains.annotations.Nullable;
 
 import com.trilon.omnio.Constants;
+import com.trilon.omnio.api.conduit.ConduitSlot;
 import com.trilon.omnio.api.conduit.ConnectionStatus;
 import com.trilon.omnio.api.conduit.IConduitType;
 import com.trilon.omnio.content.conduit.network.ConduitNetworkManager;
@@ -21,11 +23,16 @@ import net.minecraft.core.HolderLookup;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.ListTag;
 import net.minecraft.nbt.Tag;
+import net.minecraft.network.chat.Component;
 import net.minecraft.network.protocol.Packet;
 import net.minecraft.network.protocol.game.ClientGamePacketListener;
 import net.minecraft.network.protocol.game.ClientboundBlockEntityDataPacket;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.MenuProvider;
+import net.minecraft.world.entity.player.Inventory;
+import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.inventory.AbstractContainerMenu;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.entity.BlockEntityType;
@@ -40,26 +47,26 @@ import net.minecraft.world.phys.shapes.VoxelShape;
  *
  * <p>Key data structures:</p>
  * <ul>
- *   <li>{@code conduitIds} — ordered list of conduit resource IDs present in this bundle</li>
- *   <li>{@code connections} — per-conduit-ID map of {@link ConnectionContainer}</li>
+ *   <li>{@code conduitSlots} — ordered set of {@link ConduitSlot}s present in this bundle</li>
+ *   <li>{@code connections} — per-slot map of {@link ConnectionContainer}</li>
  * </ul>
  */
-public class OmniConduitBlockEntity extends BlockEntity {
+public class OmniConduitBlockEntity extends BlockEntity implements MenuProvider {
 
     // TODO: Replace with actual registered BlockEntityType from OmnIOBlockEntities
     private static BlockEntityType<OmniConduitBlockEntity> TYPE;
 
     /**
-     * Ordered set of conduit IDs present in this bundle.
-     * Each ID is a ResourceLocation like "omnio:energy_conduit_basic".
+     * Ordered set of conduit slots present in this bundle.
+     * Each slot is a {@link ConduitSlot} combining conduit ID + color channel.
      * LinkedHashSet preserves insertion order and provides O(1) contains().
      */
-    private final Set<ResourceLocation> conduitIds = new LinkedHashSet<>();
+    private final Set<ConduitSlot> conduitSlots = new LinkedHashSet<>();
 
     /**
-     * Per-conduit connection data. Key = conduit ResourceLocation ID.
+     * Per-slot connection data. Key = {@link ConduitSlot}.
      */
-    private final Map<ResourceLocation, ConnectionContainer> connections = new LinkedHashMap<>();
+    private final Map<ConduitSlot, ConnectionContainer> connections = new LinkedHashMap<>();
 
     /**
      * Cached VoxelShape, rebuilt when connections change.
@@ -92,7 +99,7 @@ public class OmniConduitBlockEntity extends BlockEntity {
     @Override
     public void setLevel(net.minecraft.world.level.Level level) {
         super.setLevel(level);
-        if (level instanceof ServerLevel serverLevel && !conduitIds.isEmpty()) {
+        if (level instanceof ServerLevel serverLevel && !conduitSlots.isEmpty()) {
             ConduitNetworkManager.get(serverLevel).onBlockEntityLoaded(this);
         }
     }
@@ -100,63 +107,82 @@ public class OmniConduitBlockEntity extends BlockEntity {
     // ---- Conduit Management ----
 
     /**
-     * @return unmodifiable view of the conduit IDs in this bundle
+     * @return unmodifiable view of the conduit slots in this bundle
      */
-    public Set<ResourceLocation> getConduitIds() {
-        return Collections.unmodifiableSet(conduitIds);
+    public Set<ConduitSlot> getConduitSlots() {
+        return Collections.unmodifiableSet(conduitSlots);
+    }
+
+    /**
+     * @return conduit slots sorted in a deterministic order (by conduitId then channel).
+     *         This ensures consistent visual positioning across all bundles regardless
+     *         of the order conduits were added.
+     */
+    public List<ConduitSlot> getSortedSlots() {
+        List<ConduitSlot> sorted = new ArrayList<>(conduitSlots);
+        Collections.sort(sorted);
+        return sorted;
     }
 
     /**
      * @return the number of conduits in this bundle
      */
     public int getConduitCount() {
-        return conduitIds.size();
+        return conduitSlots.size();
     }
 
     /**
+     * @param slot the conduit slot to check (conduitId + channel)
+     * @return true if this bundle contains the exact slot
+     */
+    public boolean hasConduit(ConduitSlot slot) {
+        return conduitSlots.contains(slot);
+    }
+
+    /**
+     * Check if this bundle contains any conduit with the given conduit ID
+     * (regardless of channel).
+     *
      * @param conduitId the conduit ID to check
-     * @return true if this bundle contains the given conduit
+     * @return true if any slot in this bundle uses the given conduit ID
      */
-    public boolean hasConduit(ResourceLocation conduitId) {
-        return conduitIds.contains(conduitId);
-    }
-
-    /**
-     * Convenience overload accepting a string ID.
-     */
-    public boolean hasConduit(String conduitId) {
-        return hasConduit(ResourceLocation.parse(conduitId));
+    public boolean hasConduitType(ResourceLocation conduitId) {
+        for (ConduitSlot slot : conduitSlots) {
+            if (slot.conduitId().equals(conduitId)) return true;
+        }
+        return false;
     }
 
     /**
      * Add a conduit to this bundle.
      *
-     * @param conduitId the ID of the conduit to add (e.g., "omnio:energy_conduit_basic")
+     * @param slot the conduit slot (conduitId + channel) to add
      * @return true if the conduit was added, false if the bundle is full or already contains it
      */
-    public boolean addConduit(ResourceLocation conduitId) {
-        if (conduitIds.size() >= Constants.MAX_CONDUITS_PER_BUNDLE || conduitIds.contains(conduitId)) {
+    public boolean addConduit(ConduitSlot slot) {
+        if (conduitSlots.size() >= Constants.MAX_CONDUITS_PER_BUNDLE || conduitSlots.contains(slot)) {
             return false;
         }
 
         // Reject adding a conduit of the same type-category but different tier
-        String conduitType = extractConduitType(conduitId);
-        for (ResourceLocation existing : conduitIds) {
-            if (extractConduitType(existing).equals(conduitType)) {
-                return false; // Same type already present (different tier) — use break-and-replace
+        String conduitType = extractConduitType(slot.conduitId());
+        for (ConduitSlot existing : conduitSlots) {
+            if (extractConduitType(existing.conduitId()).equals(conduitType)
+                    && existing.channel() == slot.channel()) {
+                return false; // Same base type + same channel already present (different tier) — use break-and-replace
             }
         }
 
-        conduitIds.add(conduitId);
+        conduitSlots.add(slot);
         ConnectionContainer container = new ConnectionContainer();
-        connections.put(conduitId, container);
+        connections.put(slot, container);
 
         // Evaluate connections to neighbors for the new conduit
         if (level != null && !level.isClientSide()) {
-            evaluateConnections(conduitId);
+            evaluateConnections(slot);
             // Notify the network manager to create/merge networks
             if (level instanceof ServerLevel serverLevel) {
-                ConduitNetworkManager.get(serverLevel).onConduitAdded(getBlockPos(), conduitId, container);
+                ConduitNetworkManager.get(serverLevel).onConduitAdded(getBlockPos(), slot, container);
             }
         }
 
@@ -167,10 +193,10 @@ public class OmniConduitBlockEntity extends BlockEntity {
     }
 
     /**
-     * Convenience overload accepting a string ID.
+     * Convenience overload: add a conduit with default channel (white/0).
      */
-    public boolean addConduit(String conduitId) {
-        return addConduit(ResourceLocation.parse(conduitId));
+    public boolean addConduit(ResourceLocation conduitId) {
+        return addConduit(new ConduitSlot(conduitId));
     }
 
     /**
@@ -196,23 +222,23 @@ public class OmniConduitBlockEntity extends BlockEntity {
     /**
      * Remove a conduit from this bundle.
      *
-     * @param conduitId the ID of the conduit to remove
+     * @param slot the conduit slot to remove
      * @return true if the conduit was removed
      */
-    public boolean removeConduit(ResourceLocation conduitId) {
-        if (!conduitIds.remove(conduitId)) {
+    public boolean removeConduit(ConduitSlot slot) {
+        if (!conduitSlots.remove(slot)) {
             return false;
         }
-        connections.remove(conduitId);
+        connections.remove(slot);
 
-        // Disconnect neighbor bundles' connections for this conduit type
+        // Disconnect neighbor bundles' connections for this conduit slot
         if (level != null && !level.isClientSide()) {
-            disconnectNeighborsFor(conduitId);
+            disconnectNeighborsFor(slot);
         }
 
         // Notify the network manager to handle potential splits
         if (level instanceof ServerLevel serverLevel) {
-            ConduitNetworkManager.get(serverLevel).onConduitRemoved(getBlockPos(), conduitId);
+            ConduitNetworkManager.get(serverLevel).onConduitRemoved(getBlockPos(), slot);
         }
 
         invalidateShape();
@@ -220,7 +246,7 @@ public class OmniConduitBlockEntity extends BlockEntity {
         syncToClient();
 
         // If no conduits remain, remove the block entirely
-        if (conduitIds.isEmpty() && level != null) {
+        if (conduitSlots.isEmpty() && level != null) {
             level.removeBlock(getBlockPos(), false);
         }
 
@@ -228,45 +254,45 @@ public class OmniConduitBlockEntity extends BlockEntity {
     }
 
     /**
-     * @param conduitId the conduit to query
-     * @return the connection container for the given conduit, or null if not present
+     * @param slot the conduit slot to query
+     * @return the connection container for the given slot, or null if not present
      */
     @Nullable
-    public ConnectionContainer getConnectionContainer(ResourceLocation conduitId) {
-        return connections.get(conduitId);
+    public ConnectionContainer getConnectionContainer(ConduitSlot slot) {
+        return connections.get(slot);
     }
 
     // ---- Connection Evaluation ----
 
     /**
-     * Evaluate all 6 neighbor positions for a specific conduit type to determine
+     * Evaluate all 6 neighbor positions for a specific conduit slot to determine
      * connection status (conduit-to-conduit, conduit-to-block, or disconnected).
      */
-    private void evaluateConnections(ResourceLocation conduitId) {
+    private void evaluateConnections(ConduitSlot slot) {
         if (level == null) return;
 
-        ConnectionContainer container = connections.get(conduitId);
+        ConnectionContainer container = connections.get(slot);
         if (container == null) return;
 
         for (Direction dir : Direction.values()) {
-            evaluateConnection(conduitId, container, dir);
+            evaluateConnection(slot, container, dir);
         }
     }
 
     /**
-     * Evaluate a single direction for a specific conduit.
+     * Evaluate a single direction for a specific conduit slot.
      *
      * @return true if the connection status changed (caller should notify network manager)
      */
-    private boolean evaluateConnection(ResourceLocation conduitId, ConnectionContainer container, Direction dir) {
+    private boolean evaluateConnection(ConduitSlot slot, ConnectionContainer container, Direction dir) {
         if (level == null) return false;
 
         BlockPos neighborPos = getBlockPos().relative(dir);
         BlockEntity neighborBE = level.getBlockEntity(neighborPos);
 
         if (neighborBE instanceof OmniConduitBlockEntity neighborBundle) {
-            // Check if neighbor has the same conduit type → conduit-to-conduit
-            if (neighborBundle.hasConduit(conduitId)) {
+            // Check if neighbor has the same conduit slot (same type + same channel)
+            if (neighborBundle.hasConduit(slot)) {
                 ConnectionStatus oldStatus = container.getStatus(dir);
                 // Don't override player-disabled connections
                 if (oldStatus == ConnectionStatus.DISABLED) {
@@ -275,7 +301,7 @@ public class OmniConduitBlockEntity extends BlockEntity {
                 container.setConfig(dir, ConnectionConfig.conduitConnection());
 
                 // Also set the reverse connection on the neighbor
-                ConnectionContainer neighborContainer = neighborBundle.getConnectionContainer(conduitId);
+                ConnectionContainer neighborContainer = neighborBundle.getConnectionContainer(slot);
                 if (neighborContainer != null) {
                     Direction opposite = dir.getOpposite();
                     if (neighborContainer.getStatus(opposite) == ConnectionStatus.DISCONNECTED) {
@@ -290,7 +316,7 @@ public class OmniConduitBlockEntity extends BlockEntity {
         }
 
         // Check if neighbor block has a compatible capability for this conduit type
-        IConduitType<?> conduitType = ConduitTypeRegistry.getOrStub(conduitId);
+        IConduitType<?> conduitType = ConduitTypeRegistry.getOrStub(slot.conduitId());
         if (conduitType.canConnectToBlock(level, getBlockPos(), dir)) {
             // Only upgrade DISCONNECTED to CONNECTED_BLOCK; don't overwrite DISABLED
             ConnectionStatus currentStatus = container.getStatus(dir);
@@ -312,19 +338,19 @@ public class OmniConduitBlockEntity extends BlockEntity {
 
     /**
      * Called when a neighboring block changes.
-     * Re-evaluates connections for all conduits on the affected side.
+     * Re-evaluates connections for all conduit slots on the affected side.
      */
     public void onNeighborChanged(Direction direction, BlockState neighborState, BlockPos neighborPos) {
         boolean anyChanged = false;
-        for (ResourceLocation conduitId : conduitIds) {
-            ConnectionContainer container = connections.get(conduitId);
+        for (ConduitSlot slot : conduitSlots) {
+            ConnectionContainer container = connections.get(slot);
             if (container != null) {
-                boolean changed = evaluateConnection(conduitId, container, direction);
+                boolean changed = evaluateConnection(slot, container, direction);
                 if (changed) {
                     anyChanged = true;
                     // Only notify network manager if connection actually changed — avoids unnecessary BFS
                     if (level instanceof ServerLevel serverLevel) {
-                        ConduitNetworkManager.get(serverLevel).onConnectionsChanged(getBlockPos(), conduitId, container);
+                        ConduitNetworkManager.get(serverLevel).onConnectionsChanged(getBlockPos(), slot, container);
                     }
                 }
             }
@@ -343,32 +369,32 @@ public class OmniConduitBlockEntity extends BlockEntity {
     public void onBlockRemoved() {
         if (level == null || level.isClientSide()) return;
 
-        // Disconnect neighbors for all conduit types in this bundle
-        for (ResourceLocation conduitId : conduitIds) {
-            disconnectNeighborsFor(conduitId);
+        // Disconnect neighbors for all conduit slots in this bundle
+        for (ConduitSlot slot : conduitSlots) {
+            disconnectNeighborsFor(slot);
         }
 
         // Notify network manager that all conduit nodes at this position are removed
         if (level instanceof ServerLevel serverLevel) {
             ConduitNetworkManager manager = ConduitNetworkManager.get(serverLevel);
-            for (ResourceLocation conduitId : conduitIds) {
-                manager.onConduitRemoved(getBlockPos(), conduitId);
+            for (ConduitSlot slot : conduitSlots) {
+                manager.onConduitRemoved(getBlockPos(), slot);
             }
         }
     }
 
     /**
-     * Notify all 6 neighboring bundles to disconnect their connection for a specific conduit type.
+     * Notify all 6 neighboring bundles to disconnect their connection for a specific conduit slot.
      * Called when removing a single conduit or when the block is destroyed.
      */
-    private void disconnectNeighborsFor(ResourceLocation conduitId) {
+    private void disconnectNeighborsFor(ConduitSlot slot) {
         if (level == null) return;
 
         for (Direction dir : Direction.values()) {
             BlockPos neighborPos = getBlockPos().relative(dir);
             BlockEntity neighborBE = level.getBlockEntity(neighborPos);
             if (neighborBE instanceof OmniConduitBlockEntity neighborBundle) {
-                ConnectionContainer neighborContainer = neighborBundle.getConnectionContainer(conduitId);
+                ConnectionContainer neighborContainer = neighborBundle.getConnectionContainer(slot);
                 if (neighborContainer != null) {
                     neighborContainer.disconnect(dir.getOpposite());
                     neighborBundle.invalidateShape();
@@ -377,7 +403,7 @@ public class OmniConduitBlockEntity extends BlockEntity {
                     // Sync the neighbor's node cache so graph state stays consistent
                     if (level instanceof ServerLevel serverLevel) {
                         ConduitNetworkManager.get(serverLevel)
-                                .onConnectionsChanged(neighborPos, conduitId, neighborContainer);
+                                .onConnectionsChanged(neighborPos, slot, neighborContainer);
                     }
                 }
             }
@@ -401,21 +427,13 @@ public class OmniConduitBlockEntity extends BlockEntity {
     }
 
     private VoxelShape rebuildShape() {
-        Set<Direction> connectedDirs = EnumSet.noneOf(Direction.class);
-        for (ConnectionContainer container : connections.values()) {
-            for (Direction dir : Direction.values()) {
-                if (container.isConnected(dir)) {
-                    connectedDirs.add(dir);
-                }
-            }
-        }
-        return OmniConduitBlock.buildShape(connectedDirs);
+        return ConduitShape.buildCombinedShape(getSortedSlots(), connections);
     }
 
     // ---- NBT Serialization ----
 
     private static final String TAG_CONDUITS = "Conduits";
-    private static final String TAG_CONDUIT_ID = "Id";
+    private static final String TAG_SLOT = "Slot";
     private static final String TAG_CONNECTION = "Connection";
 
     @Override
@@ -432,10 +450,10 @@ public class OmniConduitBlockEntity extends BlockEntity {
 
     private void saveConduitData(CompoundTag tag, HolderLookup.Provider registries) {
         ListTag conduitList = new ListTag();
-        for (ResourceLocation conduitId : conduitIds) {
+        for (ConduitSlot slot : conduitSlots) {
             CompoundTag entry = new CompoundTag();
-            entry.putString(TAG_CONDUIT_ID, conduitId.toString());
-            ConnectionContainer container = connections.get(conduitId);
+            entry.put(TAG_SLOT, slot.save());
+            ConnectionContainer container = connections.get(slot);
             if (container != null) {
                 entry.put(TAG_CONNECTION, container.save(registries));
             }
@@ -445,25 +463,67 @@ public class OmniConduitBlockEntity extends BlockEntity {
     }
 
     private void loadConduitData(CompoundTag tag, HolderLookup.Provider registries) {
-        conduitIds.clear();
+        conduitSlots.clear();
         connections.clear();
 
         if (tag.contains(TAG_CONDUITS)) {
             ListTag conduitList = tag.getList(TAG_CONDUITS, Tag.TAG_COMPOUND);
             for (int i = 0; i < conduitList.size(); i++) {
                 CompoundTag entry = conduitList.getCompound(i);
-                ResourceLocation conduitId = ResourceLocation.parse(entry.getString(TAG_CONDUIT_ID));
-                conduitIds.add(conduitId);
+                ConduitSlot slot;
+                if (entry.contains(TAG_SLOT)) {
+                    // New format: slot compound with conduitId + channel
+                    slot = ConduitSlot.load(entry.getCompound(TAG_SLOT));
+                } else if (entry.contains("Id")) {
+                    // Legacy format: just a conduit ID string, default channel 0
+                    ResourceLocation conduitId = ResourceLocation.parse(entry.getString("Id"));
+                    slot = new ConduitSlot(conduitId);
+                } else {
+                    continue; // Malformed entry, skip
+                }
+                conduitSlots.add(slot);
 
                 if (entry.contains(TAG_CONNECTION)) {
-                    connections.put(conduitId, ConnectionContainer.load(entry.getCompound(TAG_CONNECTION), registries));
+                    connections.put(slot, ConnectionContainer.load(entry.getCompound(TAG_CONNECTION), registries));
                 } else {
-                    connections.put(conduitId, new ConnectionContainer());
+                    connections.put(slot, new ConnectionContainer());
                 }
             }
         }
 
         invalidateShape();
+    }
+
+    // ---- Config Change Notification (called from ConduitMenu) ----
+
+    /**
+     * Called after the GUI changes a config value (transfer mode, priority, redstone, channel).
+     * Re-syncs the node's cached config in the network manager so the ticker reads
+     * the latest values, then notifies the client for visual updates.
+     */
+    public void notifyConfigChanged(ConduitSlot slot) {
+        ConnectionContainer container = connections.get(slot);
+        if (container == null) return;
+
+        if (level instanceof ServerLevel serverLevel) {
+            ConduitNetworkManager.get(serverLevel).onConnectionsChanged(getBlockPos(), slot, container);
+        }
+        invalidateShape();
+        setChanged();
+        syncToClient();
+    }
+
+    // ---- MenuProvider ----
+
+    @Override
+    public Component getDisplayName() {
+        return Component.translatable("container.omnio.conduit");
+    }
+
+    @Nullable
+    @Override
+    public AbstractContainerMenu createMenu(int containerId, Inventory playerInv, Player player) {
+        return new ConduitMenu(containerId, playerInv, this);
     }
 
     // ---- Client Sync ----

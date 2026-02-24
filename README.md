@@ -27,7 +27,7 @@ OmnIO is a multi-loader (NeoForge + Fabric) Minecraft mod providing a tiered, un
 
 ## Project Status
 
-### Overall Progress: ~60%
+### Overall Progress: ~75%
 
 | Area | Status | Notes |
 |------|--------|-------|
@@ -39,13 +39,13 @@ OmnIO is a multi-loader (NeoForge + Fabric) Minecraft mod providing a tiered, un
 | Fluid Transfer | ✅ Done | Pool-and-distribute, fluid locking, NeoForge IFluidHandler bridge |
 | Item Transfer | ✅ Done | Round-robin extract, priority insert, simulate-then-commit |
 | Redstone Signals | ✅ Done | 16-channel propagation, DyeColor mapping |
-| Network Persistence | 🔲 Todo | SavedData serialization to disk |
-| Multi-Channel Rework | 🔲 Todo | ConduitSlot(typeId, channel) keying throughout |
-| Rendering | 🔲 Todo | Custom model, VoxelShape, tier tinting |
-| GUI / Menu | 🔲 Todo | Connection config, channel picker, filters |
-| Facades | 🔲 Todo | Cosmetic block overlays |
+| Network Persistence | ✅ Done | SavedData serialization to disk |
+| Multi-Channel Rework | ✅ Done | ConduitSlot(typeId, channel) keying throughout |
+| Rendering | ✅ Done | BER, VoxelShape, tier/channel tinting, resource files |
+| GUI / Menu | � In Progress | Connection config, channel picker, filters |
 | Fabric Real Impls | 🔲 Todo | Team Reborn Energy, Fabric Transfer API v2 |
 | API Docs | 🔲 Todo | Javadoc, addon guide |
+| Facades | 🔲 Todo | Cosmetic block overlays (low priority) |
 
 ---
 
@@ -59,32 +59,35 @@ Server-side logic is fully functional on NeoForge. All four conduit types (energ
 
 ### Next Steps (in order)
 
-#### Step 1: Network Persistence (`ConduitNetworkSavedData`)
+#### Step 1: Network Persistence (`ConduitNetworkSavedData`) ✅
 Save and restore conduit networks across world reloads using Minecraft's `SavedData` API.
 
-- [ ] `ConduitNetworkSavedData.java` — serialize all networks + node data to NBT
-- [ ] Integrate with `ConduitNetworkManager` load/save hooks
-- [ ] Handle missing conduit types gracefully (mod removal scenario)
+- [x] `ConduitNetworkSavedData.java` — serialize all networks + node data to NBT
+- [x] Integrate with `ConduitNetworkManager` load/save hooks
+- [x] Handle missing conduit types gracefully (mod removal scenario)
 
-#### Step 2: Multi-Channel Bundle Rework
+#### Step 2: Multi-Channel Bundle Rework ✅
 Introduce `ConduitSlot(typeId, channel)` keying so the same conduit type can exist multiple times per bundle on different color channels.
 
-- [ ] `ConduitSlot.java` — record with `ResourceLocation typeId` + `int channel`
-- [ ] `OmniConduitBlockEntity` — change `Map<ResourceLocation, ...>` to `Map<ConduitSlot, ...>`
-- [ ] `ConduitNetworkManager` — key networks by `ConduitSlot` instead of `ResourceLocation`
-- [ ] `ConduitItem` — store channel in item data component (default = white/0)
-- [ ] Enforce 9-conduit max per bundle
-- [ ] Per-`(slot, face)` connection config (multiple connections on same face)
+- [x] `ConduitSlot.java` — record with `ResourceLocation typeId` + `int channel`
+- [x] `OmniConduitBlockEntity` — change `Map<ResourceLocation, ...>` to `Map<ConduitSlot, ...>`
+- [x] `ConduitNetworkManager` — key networks by `ConduitSlot` instead of `ResourceLocation`
+- [x] `ConduitItem` — store channel in item data component (default = white/0)
+- [x] Enforce 9-conduit max per bundle
+- [x] Per-`(slot, face)` connection config (multiple connections on same face)
 
-#### Step 3: Rendering
-Custom block model rendering for conduit bundles with per-conduit cores, connectors, and tier-based tinting.
+#### Step 3: Rendering ✅
+BlockEntityRenderer-based rendering for conduit bundles with per-conduit cores, connectors, and tier/channel-based tinting.
 
-- [ ] `ConduitBundleModel.java` — custom `IUnbakedGeometry` (NeoForge) / `BakedModel` (Fabric)
-- [ ] `ConduitShape.java` — per-conduit VoxelShape for hit detection and ray tracing
-- [ ] Conduit core + connector model parts (procedural geometry)
-- [ ] Tier-based color tinting
-- [ ] Channel-based DyeColor tinting on conduit cores
-- [ ] Block Entity Renderer for animated overlays (optional)
+- [x] `ConduitBundleRenderer.java` — BER with colored 3D geometry (RenderType.solid)
+- [x] `ConduitShape.java` — per-conduit VoxelShape (3×3 grid layout, 9 slots)
+- [x] `ConduitRenderHelper.java` — type/tier/channel color mapping
+- [x] Conduit core + connector arm procedural geometry
+- [x] Tier-based brightness tinting
+- [x] Channel-based DyeColor tinting on conduit cores
+- [x] NeoForge client registration (`OmnIONeoForgeClient`)
+- [x] Fabric client registration (`OmnIOFabricClient`)
+- [x] Blockstate, block model, 13 item models, en_us lang file
 
 #### Step 4: GUI / Menu
 In-world configuration screen for conduit connections.
@@ -97,15 +100,7 @@ In-world configuration screen for conduit connections.
 - [ ] Item filter slots (item conduit)
 - [ ] Fluid lock toggle (fluid conduit)
 
-#### Step 5: Facades
-Cosmetic block overlays that hide conduits behind the appearance of other blocks.
-
-- [ ] Facade item + crafting recipe
-- [ ] Facade rendering (mimic target block appearance)
-- [ ] Facade placement / removal interaction
-- [ ] Facade data persistence in block entity NBT
-
-#### Step 6: Fabric Platform Implementation
+#### Step 5: Fabric Platform Implementation
 Replace transfer helper stubs with real Fabric API bridges.
 
 - [ ] `FabricEnergyTransferHelper` — Team Reborn Energy API bridge
@@ -114,7 +109,7 @@ Replace transfer helper stubs with real Fabric API bridges.
 - [ ] Fabric rendering integration (custom BakedModel)
 - [ ] Fabric menu/screen registration
 
-#### Step 7: API Stabilization + Documentation
+#### Step 6: API Stabilization + Documentation
 Freeze public API, document everything, provide addon examples.
 
 - [ ] Freeze `api/` package interfaces
@@ -122,6 +117,14 @@ Freeze public API, document everything, provide addon examples.
 - [ ] `TierConfig.java` — config-file overridable tier values
 - [ ] Third-party addon example / guide
 - [ ] `ConduitBundleData.java` — bundle serialization data class
+
+#### Step 7: Facades (Low Priority)
+Cosmetic block overlays that hide conduits behind the appearance of other blocks.
+
+- [ ] Facade item + crafting recipe
+- [ ] Facade rendering (mimic target block appearance)
+- [ ] Facade placement / removal interaction
+- [ ] Facade data persistence in block entity NBT
 
 ---
 

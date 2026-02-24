@@ -15,13 +15,13 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 import com.trilon.omnio.Constants;
+import com.trilon.omnio.api.conduit.ConduitSlot;
 import com.trilon.omnio.api.conduit.IConduitType;
 import com.trilon.omnio.content.conduit.ConnectionContainer;
 import com.trilon.omnio.content.conduit.OmniConduitBlockEntity;
 
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
-import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.level.ServerLevel;
 
 /**
@@ -33,8 +33,8 @@ import net.minecraft.server.level.ServerLevel;
  *
  * <h3>Network formation rules:</h3>
  * <ul>
- *   <li>Each conduit ID gets its own independent set of networks</li>
- *   <li>When a conduit is placed, check all 6 neighbors for matching conduit IDs</li>
+ *   <li>Each {@link ConduitSlot} (conduit ID + color channel) gets its own independent set of networks</li>
+ *   <li>When a conduit is placed, check all 6 neighbors for matching conduit slots</li>
  *   <li>If neighbor(s) exist, join/merge their networks into one</li>
  *   <li>If no neighbors, create a new singleton network</li>
  * </ul>
@@ -57,15 +57,15 @@ public class ConduitNetworkManager {
     private static final Map<ServerLevel, ConduitNetworkManager> INSTANCES = new ConcurrentHashMap<>();
 
     /**
-     * All nodes in this level, keyed by (conduitId, blockPos).
+     * All nodes in this level, keyed by (conduitSlot, blockPos).
      * Primary index for O(1) node lookup.
      */
-    private final Map<ResourceLocation, Map<BlockPos, ConduitNodeImpl>> nodesByConduit = new HashMap<>();
+    private final Map<ConduitSlot, Map<BlockPos, ConduitNodeImpl>> nodesByConduit = new HashMap<>();
 
     /**
-     * All active networks in this level, keyed by (conduitId, networkId).
+     * All active networks in this level, keyed by conduitSlot.
      */
-    private final Map<ResourceLocation, Set<ConduitNetwork>> networksByConduit = new HashMap<>();
+    private final Map<ConduitSlot, Set<ConduitNetwork>> networksByConduit = new HashMap<>();
 
     /**
      * Spatial index: nodes grouped by chunk coordinate for O(nodes_in_chunk)
@@ -80,9 +80,15 @@ public class ConduitNetworkManager {
     private final ServerLevel level;
 
     /**
-     * Tick counter per conduit ID, for rate-limiting ticker invocations.
+     * Tick counter per conduit slot, for rate-limiting ticker invocations.
      */
-    private final Map<ResourceLocation, Integer> tickCounters = new HashMap<>();
+    private final Map<ConduitSlot, Integer> tickCounters = new HashMap<>();
+
+    /**
+     * Persistence layer for saving/restoring network contexts across world reloads.
+     * Loaded lazily on first access via {@link #getSavedData()}.
+     */
+    private ConduitNetworkSavedData savedData;
 
     private ConduitNetworkManager(ServerLevel level) {
         this.level = level;
@@ -102,6 +108,37 @@ public class ConduitNetworkManager {
         INSTANCES.clear();
     }
 
+    /**
+     * Get or create the {@link ConduitNetworkSavedData} for this level.
+     * Lazily loaded on first access via the level's DataStorage.
+     */
+    public ConduitNetworkSavedData getSavedData() {
+        if (savedData == null) {
+            savedData = level.getDataStorage().computeIfAbsent(
+                    ConduitNetworkSavedData.factory(),
+                    ConduitNetworkSavedData.DATA_KEY
+            );
+            savedData.setManager(this);
+        }
+        return savedData;
+    }
+
+    /**
+     * @return all network sets keyed by ConduitSlot (for SavedData serialization)
+     */
+    Map<ConduitSlot, Set<ConduitNetwork>> getNetworksBySlot() {
+        return networksByConduit;
+    }
+
+    /**
+     * Mark the SavedData as dirty so MC will save it on next world save.
+     */
+    private void markSavedDataDirty() {
+        if (savedData != null) {
+            savedData.setDirty();
+        }
+    }
+
     // ========================================================================
     // Node placement — called when a conduit is added to a bundle
     // ========================================================================
@@ -111,11 +148,11 @@ public class ConduitNetworkManager {
      * Creates a node, evaluates neighbor connections, and merges/creates networks.
      *
      * @param pos       the position of the conduit bundle
-     * @param conduitId the conduit variant ID
+     * @param slot      the conduit slot (conduit ID + channel)
      * @param container the connection container for this conduit at this position
      */
-    public void onConduitAdded(BlockPos pos, ResourceLocation conduitId, ConnectionContainer container) {
-        Map<BlockPos, ConduitNodeImpl> nodesMap = nodesByConduit.computeIfAbsent(conduitId, k -> new HashMap<>());
+    public void onConduitAdded(BlockPos pos, ConduitSlot slot, ConnectionContainer container) {
+        Map<BlockPos, ConduitNodeImpl> nodesMap = nodesByConduit.computeIfAbsent(slot, k -> new HashMap<>());
 
         // Don't re-add if already tracked (e.g., chunk reload)
         if (nodesMap.containsKey(pos)) {
@@ -158,9 +195,9 @@ public class ConduitNetworkManager {
                     ConduitNetwork other = it.next();
                     if (other != primary) {
                         Constants.LOG.debug("Merging network {} into {} for {} (chunk reload)",
-                                other.getId(), primary.getId(), conduitId);
+                                other.getId(), primary.getId(), slot);
                         primary.mergeFrom(other);
-                        removeNetwork(conduitId, other);
+                        removeNetwork(slot, other);
                     }
                 }
                 recalculateNetworkContext(primary);
@@ -198,10 +235,13 @@ public class ConduitNetworkManager {
 
         if (neighborNetworks.isEmpty()) {
             // No neighbors — create a new singleton network
-            ConduitNetwork network = createNetwork(conduitId);
+            ConduitNetwork network = createNetwork(slot);
             network.addNode(node);
             recalculateNetworkContext(network);
-            Constants.LOG.debug("Created new network {} for {} at {}", network.getId(), conduitId, pos.toShortString());
+            // Try to restore saved context from a previous world save
+            getSavedData().tryApplyPendingContext(slot, network);
+            markSavedDataDirty();
+            Constants.LOG.debug("Created new network {} for {} at {}", network.getId(), slot, pos.toShortString());
         } else {
             // Merge all neighboring networks into one, then add the new node
             Iterator<ConduitNetwork> it = neighborNetworks.iterator();
@@ -209,13 +249,16 @@ public class ConduitNetworkManager {
             while (it.hasNext()) {
                 ConduitNetwork other = it.next();
                 if (other != primary) {
-                    Constants.LOG.debug("Merging network {} into {} for {}", other.getId(), primary.getId(), conduitId);
+                    Constants.LOG.debug("Merging network {} into {} for {}", other.getId(), primary.getId(), slot);
                     primary.mergeFrom(other);
-                    removeNetwork(conduitId, other);
+                    removeNetwork(slot, other);
                 }
             }
             primary.addNode(node);
             recalculateNetworkContext(primary);
+            // Try to restore saved context (may match after merge)
+            getSavedData().tryApplyPendingContext(slot, primary);
+            markSavedDataDirty();
         }
     }
 
@@ -227,11 +270,11 @@ public class ConduitNetworkManager {
      * Called when a conduit is removed from a block entity.
      * Removes the node, disconnects graph edges, and handles potential network splits.
      *
-     * @param pos       the position of the conduit bundle
-     * @param conduitId the conduit variant ID
+     * @param pos  the position of the conduit bundle
+     * @param slot the conduit slot (conduit ID + channel)
      */
-    public void onConduitRemoved(BlockPos pos, ResourceLocation conduitId) {
-        Map<BlockPos, ConduitNodeImpl> nodesMap = nodesByConduit.get(conduitId);
+    public void onConduitRemoved(BlockPos pos, ConduitSlot slot) {
+        Map<BlockPos, ConduitNodeImpl> nodesMap = nodesByConduit.get(slot);
         if (nodesMap == null) return;
 
         ConduitNodeImpl node = nodesMap.remove(pos);
@@ -257,11 +300,12 @@ public class ConduitNetworkManager {
 
             if (network.isEmpty()) {
                 // Network is now empty, clean it up
-                removeNetwork(conduitId, network);
-                Constants.LOG.debug("Removed empty network {} for {}", network.getId(), conduitId);
+                removeNetwork(slot, network);
+                markSavedDataDirty();
+                Constants.LOG.debug("Removed empty network {} for {}", network.getId(), slot);
             } else if (formerNeighbors.size() >= 2) {
                 // Potential split: check if all former neighbors can still reach each other
-                checkAndSplitNetwork(conduitId, network, formerNeighbors);
+                checkAndSplitNetwork(slot, network, formerNeighbors);
             }
             // If only 0 or 1 former neighbor, no split possible
         }
@@ -272,7 +316,7 @@ public class ConduitNetworkManager {
      * Uses BFS from the first former neighbor; if not all former neighbors
      * are reachable, splits into separate networks.
      */
-    private void checkAndSplitNetwork(ResourceLocation conduitId, ConduitNetwork network, List<ConduitNodeImpl> formerNeighbors) {
+    private void checkAndSplitNetwork(ConduitSlot slot, ConduitNetwork network, List<ConduitNodeImpl> formerNeighbors) {
         // BFS from the first remaining neighbor
         ConduitNodeImpl seed = formerNeighbors.get(0);
         Set<BlockPos> reachable = network.bfsReachable(seed);
@@ -326,7 +370,7 @@ public class ConduitNetworkManager {
             if (assigned.contains(neighbor.getPos())) continue;
 
             // BFS from this neighbor among the removed nodes
-            ConduitNetwork splitNetwork = createNetwork(conduitId);
+            ConduitNetwork splitNetwork = createNetwork(slot);
             Set<BlockPos> splitReachable = bfsAmong(neighbor, removedPositions);
 
             // Compute fraction relative to nodes the context currently represents:
@@ -356,11 +400,12 @@ public class ConduitNetworkManager {
 
             recalculateNetworkContext(splitNetwork);
             Constants.LOG.debug("Split off network {} ({} nodes) from {} for {}",
-                    splitNetwork.getId(), splitNetwork.size(), network.getId(), conduitId);
+                    splitNetwork.getId(), splitNetwork.size(), network.getId(), slot);
         }
 
         // Recalculate capacity for the original network after all splits
         recalculateNetworkContext(network);
+        markSavedDataDirty();
     }
 
     /**
@@ -401,8 +446,8 @@ public class ConduitNetworkManager {
      * any topology changes (merges if new edges bridge separate networks, splits if
      * removed edges disconnect parts of a network).
      */
-    public void onConnectionsChanged(BlockPos pos, ResourceLocation conduitId, ConnectionContainer container) {
-        Map<BlockPos, ConduitNodeImpl> nodesMap = nodesByConduit.get(conduitId);
+    public void onConnectionsChanged(BlockPos pos, ConduitSlot slot, ConnectionContainer container) {
+        Map<BlockPos, ConduitNodeImpl> nodesMap = nodesByConduit.get(slot);
         if (nodesMap == null) return;
 
         ConduitNodeImpl node = nodesMap.get(pos);
@@ -454,9 +499,9 @@ public class ConduitNetworkManager {
                 ConduitNetwork other = it.next();
                 if (other != primary) {
                     Constants.LOG.debug("Merging network {} into {} for {} (connection change)",
-                            other.getId(), primary.getId(), conduitId);
+                            other.getId(), primary.getId(), slot);
                     primary.mergeFrom(other);
-                    removeNetwork(conduitId, other);
+                    removeNetwork(slot, other);
                 }
             }
             recalculateNetworkContext(primary);
@@ -490,7 +535,7 @@ public class ConduitNetworkManager {
                 int unassignedOrphans2 = unreachable.size();
                 for (ConduitNodeImpl orphan : unreachable) {
                     if (assigned.contains(orphan.getPos())) continue;
-                    ConduitNetwork splitNetwork = createNetwork(conduitId);
+                    ConduitNetwork splitNetwork = createNetwork(slot);
                     Set<BlockPos> fragment = bfsAmong(orphan, unreachablePositions);
                     // Compute fraction relative to the nodes the context currently represents
                     int contextNodeCount = network.size() + unassignedOrphans2;
@@ -511,7 +556,7 @@ public class ConduitNetworkManager {
                         splitNetwork.setContext(ctx.split(fraction));
                     }
                     Constants.LOG.debug("Split off network {} ({} nodes) from {} for {} (connection change)",
-                            splitNetwork.getId(), splitNetwork.size(), network.getId(), conduitId);
+                            splitNetwork.getId(), splitNetwork.size(), network.getId(), slot);
                     recalculateNetworkContext(splitNetwork);
                 }
             }
@@ -520,6 +565,7 @@ public class ConduitNetworkManager {
         if (network != null) {
             network.invalidateCaches();
             recalculateNetworkContext(network);
+            markSavedDataDirty();
         }
     }
 
@@ -537,8 +583,8 @@ public class ConduitNetworkManager {
         // ConcurrentModificationException if a ticker triggers block entity loads
         // that modify networksByConduit or its inner sets.
         var snapshot = List.copyOf(networksByConduit.entrySet());
-        for (Map.Entry<ResourceLocation, Set<ConduitNetwork>> entry : snapshot) {
-            ResourceLocation conduitId = entry.getKey();
+        for (Map.Entry<ConduitSlot, Set<ConduitNetwork>> entry : snapshot) {
+            ConduitSlot slot = entry.getKey();
             Set<ConduitNetwork> liveSet = entry.getValue();
 
             if (liveSet.isEmpty()) continue;
@@ -549,7 +595,7 @@ public class ConduitNetworkManager {
             int tickRate = type.getTickRate();
 
             // Rate-limit based on tick rate
-            int counter = tickCounters.getOrDefault(conduitId, 0) + 1;
+            int counter = tickCounters.getOrDefault(slot, 0) + 1;
             if (counter >= tickRate) {
                 counter = 0;
                 // Snapshot the inner set: tickers may trigger BE loads that modify it
@@ -560,7 +606,7 @@ public class ConduitNetworkManager {
                     }
                 }
             }
-            tickCounters.put(conduitId, counter);
+            tickCounters.put(slot, counter);
         }
     }
 
@@ -611,10 +657,10 @@ public class ConduitNetworkManager {
      */
     public void onBlockEntityLoaded(OmniConduitBlockEntity blockEntity) {
         BlockPos pos = blockEntity.getBlockPos();
-        for (ResourceLocation conduitId : blockEntity.getConduitIds()) {
-            ConnectionContainer container = blockEntity.getConnectionContainer(conduitId);
+        for (ConduitSlot slot : blockEntity.getConduitSlots()) {
+            ConnectionContainer container = blockEntity.getConnectionContainer(slot);
             if (container != null) {
-                onConduitAdded(pos, conduitId, container);
+                onConduitAdded(pos, slot, container);
             }
         }
     }
@@ -625,8 +671,8 @@ public class ConduitNetworkManager {
      */
     public void onBlockEntityRemoved(OmniConduitBlockEntity blockEntity) {
         BlockPos pos = blockEntity.getBlockPos();
-        for (ResourceLocation conduitId : blockEntity.getConduitIds()) {
-            onConduitRemoved(pos, conduitId);
+        for (ConduitSlot slot : blockEntity.getConduitSlots()) {
+            onConduitRemoved(pos, slot);
         }
     }
 
@@ -634,8 +680,8 @@ public class ConduitNetworkManager {
     // Internal helpers
     // ========================================================================
 
-    private ConduitNetwork createNetwork(ResourceLocation conduitId) {
-        IConduitType<?> type = ConduitTypeRegistry.getOrStub(conduitId);
+    private ConduitNetwork createNetwork(ConduitSlot slot) {
+        IConduitType<?> type = ConduitTypeRegistry.getOrStub(slot.conduitId());
         ConduitNetwork network = new ConduitNetwork(type);
 
         // Initialize type-specific network context via polymorphic factory
@@ -644,16 +690,16 @@ public class ConduitNetworkManager {
             network.setContext(context);
         }
 
-        networksByConduit.computeIfAbsent(conduitId, k -> new LinkedHashSet<>()).add(network);
+        networksByConduit.computeIfAbsent(slot, k -> new LinkedHashSet<>()).add(network);
         return network;
     }
 
-    private void removeNetwork(ResourceLocation conduitId, ConduitNetwork network) {
-        Set<ConduitNetwork> networks = networksByConduit.get(conduitId);
+    private void removeNetwork(ConduitSlot slot, ConduitNetwork network) {
+        Set<ConduitNetwork> networks = networksByConduit.get(slot);
         if (networks != null) {
             networks.remove(network);
             if (networks.isEmpty()) {
-                networksByConduit.remove(conduitId);
+                networksByConduit.remove(slot);
             }
         }
     }
@@ -687,11 +733,11 @@ public class ConduitNetworkManager {
     // ---- Queries ----
 
     /**
-     * @param conduitId the conduit type to query
-     * @return all networks for the given conduit type in this level
+     * @param slot the conduit slot to query
+     * @return all networks for the given conduit slot in this level
      */
-    public Collection<ConduitNetwork> getNetworks(ResourceLocation conduitId) {
-        Set<ConduitNetwork> nets = networksByConduit.get(conduitId);
+    public Collection<ConduitNetwork> getNetworks(ConduitSlot slot) {
+        Set<ConduitNetwork> nets = networksByConduit.get(slot);
         return nets != null ? Collections.unmodifiableSet(nets) : Collections.emptySet();
     }
 

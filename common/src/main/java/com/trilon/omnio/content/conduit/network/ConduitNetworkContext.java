@@ -2,6 +2,8 @@ package com.trilon.omnio.content.conduit.network;
 
 import com.trilon.omnio.api.conduit.network.IConduitNetworkContext;
 
+import net.minecraft.nbt.CompoundTag;
+
 /**
  * Default implementation of {@link IConduitNetworkContext}.
  * Provides a no-op context for conduit types that don't need per-network state
@@ -44,5 +46,27 @@ public class ConduitNetworkContext implements IConduitNetworkContext<ConduitNetw
      */
     protected void markDirty() {
         dirty = true;
+    }
+
+    // ---- NBT Persistence ----
+
+    /**
+     * Serialize this context's state to an NBT compound tag.
+     * Subclasses should override to save their specific fields.
+     *
+     * @return the serialized state (empty tag for base context)
+     */
+    public CompoundTag saveToTag() {
+        return new CompoundTag();
+    }
+
+    /**
+     * Deserialize this context's state from an NBT compound tag.
+     * Subclasses should override to load their specific fields.
+     *
+     * @param tag the tag to read from
+     */
+    public void loadFromTag(CompoundTag tag) {
+        // Default: nothing to load
     }
 }

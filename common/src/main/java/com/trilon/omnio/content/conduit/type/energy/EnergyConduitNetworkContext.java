@@ -2,6 +2,8 @@ package com.trilon.omnio.content.conduit.type.energy;
 
 import com.trilon.omnio.content.conduit.network.ConduitNetworkContext;
 
+import net.minecraft.nbt.CompoundTag;
+
 /**
  * Per-network energy buffer for energy conduit networks.
  * Stores a shared energy pool that the ticker extracts into and inserts from.
@@ -109,5 +111,24 @@ public class EnergyConduitNetworkContext extends ConduitNetworkContext {
     @Override
     public String toString() {
         return "EnergyContext[" + storedEnergy + "/" + capacity + " FE]";
+    }
+
+    // ---- NBT Persistence ----
+
+    private static final String TAG_STORED_ENERGY = "StoredEnergy";
+    private static final String TAG_CAPACITY = "Capacity";
+
+    @Override
+    public CompoundTag saveToTag() {
+        CompoundTag tag = new CompoundTag();
+        tag.putLong(TAG_STORED_ENERGY, storedEnergy);
+        tag.putLong(TAG_CAPACITY, capacity);
+        return tag;
+    }
+
+    @Override
+    public void loadFromTag(CompoundTag tag) {
+        this.capacity = tag.getLong(TAG_CAPACITY);
+        this.storedEnergy = Math.min(tag.getLong(TAG_STORED_ENERGY), this.capacity);
     }
 }

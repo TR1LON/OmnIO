@@ -7,6 +7,8 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+import com.trilon.omnio.Constants;
+
 import com.trilon.omnio.api.conduit.ConnectionStatus;
 import com.trilon.omnio.api.conduit.IConduitNode;
 import com.trilon.omnio.api.conduit.IConduitTicker;
@@ -89,7 +91,17 @@ public class ItemConduitTicker implements IConduitTicker {
             }
         }
 
-        if (extractTargets.isEmpty() || insertTargets.isEmpty()) return;
+        if (extractTargets.isEmpty() || insertTargets.isEmpty()) {
+            if (extractTargets.isEmpty() && !insertTargets.isEmpty()) {
+                Constants.LOG.debug("[ItemConduitTicker] net={}: {} insert targets but NO extract targets", network.getId(), insertTargets.size());
+            } else if (!extractTargets.isEmpty() && insertTargets.isEmpty()) {
+                Constants.LOG.debug("[ItemConduitTicker] net={}: {} extract targets but NO insert targets", network.getId(), extractTargets.size());
+            }
+            return;
+        }
+
+        Constants.LOG.debug("[ItemConduitTicker] net={}: {} extract, {} insert targets",
+                network.getId(), extractTargets.size(), insertTargets.size());
 
         // Sort insertion targets by priority (highest first)
         insertTargets.sort(Comparator.comparingInt(TransferTarget::priority).reversed());
@@ -136,6 +148,12 @@ public class ItemConduitTicker implements IConduitTicker {
                         insertTarget.accessFace, extracted, false);
                 int transferred = extracted.getCount() - leftover.getCount();
                 remainingToExtract -= transferred;
+
+                if (transferred > 0) {
+                    Constants.LOG.debug("[ItemConduitTicker] Transferred {}x {} from {} to {}",
+                            transferred, extracted.getItem(), source.targetPos.toShortString(),
+                            insertTarget.targetPos.toShortString());
+                }
 
                 // If insertion rejected items we already extracted, return them to source
                 if (!leftover.isEmpty()) {

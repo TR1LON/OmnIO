@@ -1,0 +1,18 @@
+{
+  "block.omnio.conduit_bundle": "Conduit Bundle",
+  "container.omnio.conduit": "Conduit Configuration",
+  "item.omnio.energy_conduit_basic": "Basic Energy Conduit",
+  "item.omnio.energy_conduit_advanced": "Advanced Energy Conduit",
+  "item.omnio.energy_conduit_elite": "Elite Energy Conduit",
+  "item.omnio.energy_conduit_ultimate": "Ultimate Energy Conduit",
+  "item.omnio.fluid_conduit_basic": "Basic Fluid Conduit",
+  "item.omnio.fluid_conduit_advanced": "Advanced Fluid Conduit",
+  "item.omnio.fluid_conduit_elite": "Elite Fluid Conduit",
+  "item.omnio.fluid_conduit_ultimate": "Ultimate Fluid Conduit",
+  "item.omnio.item_conduit_basic": "Basic Item Conduit",
+  "item.omnio.item_conduit_advanced": "Advanced Item Conduit",
+  "item.omnio.item_conduit_elite": "Elite Item Conduit",
+  "item.omnio.item_conduit_ultimate": "Ultimate Item Conduit",
+  "item.omnio.redstone_conduit": "Redstone Conduit",
+  "itemGroup.omnio": "OmnIO"
+}

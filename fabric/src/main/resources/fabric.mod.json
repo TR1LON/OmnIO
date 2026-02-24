@@ -8,9 +8,9 @@
     "${mod_author}"
   ],
   "contact": {
-    "homepage": "https://github.com/Trilon/OmnIO",
-    "sources": "https://github.com/Trilon/OmnIO",
-    "issues": "https://github.com/Trilon/OmnIO/issues"
+    "homepage": "https://github.com/TR1LON/OmnIO",
+    "sources": "https://github.com/TR1LON/OmnIO",
+    "issues": "https://github.com/TR1LON/OmnIO/issues"
   },
   "license": "MIT",
   "icon": "assets/omnio/icon.png",
@@ -18,6 +18,9 @@
   "entrypoints": {
     "main": [
       "com.trilon.omnio.fabric.OmnIOFabric"
+    ],
+    "client": [
+      "com.trilon.omnio.fabric.client.OmnIOFabricClient"
     ]
   },
   "mixins": [],
