@@ -1,21 +1,28 @@
 package com.trilon.omnio.registry;
 
 import com.trilon.omnio.Constants;
+import com.trilon.omnio.content.conduit.OmniConduitBlockEntity;
+import net.minecraft.world.level.block.entity.BlockEntityType;
 
 /**
- * Stub: Block entity registrations for OmnIO.
- * Will contain the OmniConduitBlockEntity type.
+ * Block entity definitions for OmnIO.
+ * Actual registration is performed by platform-specific modules.
  */
 public final class OmnIOBlockEntities {
+
+    /**
+     * The block entity type for conduit bundles.
+     */
+    public static BlockEntityType<OmniConduitBlockEntity> CONDUIT_BUNDLE;
 
     private OmnIOBlockEntities() {
     }
 
     /**
-     * Called during mod init to register all block entity types.
+     * Called by platform modules after registration to set the static reference.
      */
-    public static void register() {
-        Constants.LOG.debug("Registering block entities");
-        // TODO: Register CONDUIT_BUNDLE block entity type
+    public static void setConduitBundle(BlockEntityType<OmniConduitBlockEntity> type) {
+        CONDUIT_BUNDLE = type;
+        OmniConduitBlockEntity.setType(type);
     }
 }
