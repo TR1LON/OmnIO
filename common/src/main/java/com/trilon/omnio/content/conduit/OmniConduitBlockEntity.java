@@ -247,9 +247,11 @@ public class OmniConduitBlockEntity extends BlockEntity {
 
     /**
      * Evaluate a single direction for a specific conduit.
+     *
+     * @return true if the connection status changed (caller should notify network manager)
      */
-    private void evaluateConnection(ResourceLocation conduitId, ConnectionContainer container, Direction dir) {
-        if (level == null) return;
+    private boolean evaluateConnection(ResourceLocation conduitId, ConnectionContainer container, Direction dir) {
+        if (level == null) return false;
 
         BlockPos neighborPos = getBlockPos().relative(dir);
         BlockEntity neighborBE = level.getBlockEntity(neighborPos);
@@ -257,6 +259,7 @@ public class OmniConduitBlockEntity extends BlockEntity {
         if (neighborBE instanceof OmniConduitBlockEntity neighborBundle) {
             // Check if neighbor has the same conduit type → conduit-to-conduit
             if (neighborBundle.hasConduit(conduitId)) {
+                ConnectionStatus oldStatus = container.getStatus(dir);
                 container.setConfig(dir, ConnectionConfig.conduitConnection());
 
                 // Also set the reverse connection on the neighbor
@@ -270,7 +273,7 @@ public class OmniConduitBlockEntity extends BlockEntity {
                         neighborBundle.syncToClient();
                     }
                 }
-                return;
+                return oldStatus != ConnectionStatus.CONNECTED_CONDUIT;
             }
         }
 
@@ -281,15 +284,18 @@ public class OmniConduitBlockEntity extends BlockEntity {
             ConnectionStatus currentStatus = container.getStatus(dir);
             if (currentStatus == ConnectionStatus.DISCONNECTED) {
                 container.setConfig(dir, ConnectionConfig.blockConnection());
+                return true; // Changed from DISCONNECTED to CONNECTED_BLOCK
             }
-            return;
+            return false; // Already connected or disabled — no change
         }
 
         // No valid connection found — ensure any stale connection is cleared
         ConnectionStatus currentStatus = container.getStatus(dir);
         if (currentStatus != ConnectionStatus.DISCONNECTED && currentStatus != ConnectionStatus.DISABLED) {
             container.disconnect(dir);
+            return true; // Changed to DISCONNECTED
         }
+        return false; // Already disconnected or disabled — no change
     }
 
     /**
@@ -297,19 +303,25 @@ public class OmniConduitBlockEntity extends BlockEntity {
      * Re-evaluates connections for all conduits on the affected side.
      */
     public void onNeighborChanged(Direction direction, BlockState neighborState, BlockPos neighborPos) {
+        boolean anyChanged = false;
         for (ResourceLocation conduitId : conduitIds) {
             ConnectionContainer container = connections.get(conduitId);
             if (container != null) {
-                evaluateConnection(conduitId, container, direction);
-                // Notify network manager of connection changes
-                if (level instanceof ServerLevel serverLevel) {
-                    ConduitNetworkManager.get(serverLevel).onConnectionsChanged(getBlockPos(), conduitId, container);
+                boolean changed = evaluateConnection(conduitId, container, direction);
+                if (changed) {
+                    anyChanged = true;
+                    // Only notify network manager if connection actually changed — avoids unnecessary BFS
+                    if (level instanceof ServerLevel serverLevel) {
+                        ConduitNetworkManager.get(serverLevel).onConnectionsChanged(getBlockPos(), conduitId, container);
+                    }
                 }
             }
         }
-        invalidateShape();
-        setChanged();
-        syncToClient();
+        if (anyChanged) {
+            invalidateShape();
+            setChanged();
+            syncToClient();
+        }
     }
 
     /**

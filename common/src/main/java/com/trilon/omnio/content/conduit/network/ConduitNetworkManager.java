@@ -58,6 +58,13 @@ public class ConduitNetworkManager {
     private final Map<ResourceLocation, Set<ConduitNetwork>> networksByConduit = new HashMap<>();
 
     /**
+     * Spatial index: nodes grouped by chunk coordinate for O(nodes_in_chunk)
+     * chunk load/unload updates instead of O(M_all) full scan.
+     * Key = {@link net.minecraft.world.level.ChunkPos#asLong(int, int)}.
+     */
+    private final Map<Long, Set<ConduitNodeImpl>> nodesByChunk = new HashMap<>();
+
+    /**
      * The server level this manager is associated with.
      */
     private final ServerLevel level;
@@ -115,6 +122,7 @@ public class ConduitNetworkManager {
         ConduitNodeImpl node = new ConduitNodeImpl(pos);
         node.syncFromContainer(container);
         nodesMap.put(pos, node);
+        addToChunkIndex(node);
 
         // Find neighbor nodes and wire up graph edges — only where CONNECTED_CONDUIT exists
         Set<ConduitNetwork> neighborNetworks = new LinkedHashSet<>();
@@ -173,6 +181,7 @@ public class ConduitNetworkManager {
 
         ConduitNodeImpl node = nodesMap.remove(pos);
         if (node == null) return;
+        removeFromChunkIndex(node);
 
         ConduitNetwork network = node.getNetwork();
 
@@ -238,6 +247,18 @@ public class ConduitNetworkManager {
             network.removeNode(n);
         }
 
+        // Pre-build the candidate positions set once for all BFS calls
+        Set<BlockPos> removedPositions = new HashSet<>(toRemoveFromOriginal.size());
+        for (ConduitNodeImpl n : toRemoveFromOriginal) {
+            removedPositions.add(n.getPos());
+        }
+
+        // Build position→node lookup once for all split iterations
+        Map<BlockPos, ConduitNodeImpl> removedMap = new HashMap<>(toRemoveFromOriginal.size());
+        for (ConduitNodeImpl n : toRemoveFromOriginal) {
+            removedMap.put(n.getPos(), n);
+        }
+
         // Now BFS from each unassigned former neighbor to create new split networks
         for (int i = 1; i < formerNeighbors.size(); i++) {
             ConduitNodeImpl neighbor = formerNeighbors.get(i);
@@ -245,14 +266,16 @@ public class ConduitNetworkManager {
 
             // BFS from this neighbor among the removed nodes
             ConduitNetwork splitNetwork = createNetwork(conduitId);
-            Set<BlockPos> splitReachable = bfsAmong(neighbor, toRemoveFromOriginal);
+            Set<BlockPos> splitReachable = bfsAmong(neighbor, removedPositions);
 
             double fraction = (double) splitReachable.size() / (reachable.size() + toRemoveFromOriginal.size());
 
-            for (ConduitNodeImpl removed : toRemoveFromOriginal) {
-                if (splitReachable.contains(removed.getPos())) {
+            // Iterate fragment positions directly — O(fragment) not O(toRemoveFromOriginal)
+            for (BlockPos fragmentPos : splitReachable) {
+                ConduitNodeImpl removed = removedMap.get(fragmentPos);
+                if (removed != null) {
                     splitNetwork.addNode(removed);
-                    assigned.add(removed.getPos());
+                    assigned.add(fragmentPos);
                 }
             }
 
@@ -261,23 +284,23 @@ public class ConduitNetworkManager {
                 splitNetwork.setContext(ctx.split(fraction));
             }
 
+            recalculateEnergyCapacity(splitNetwork);
             Constants.LOG.debug("Split off network {} ({} nodes) from {} for {}",
                     splitNetwork.getId(), splitNetwork.size(), network.getId(), conduitId);
         }
 
-        // Recalculate capacity for the original and all split networks
+        // Recalculate capacity for the original network after all splits
         recalculateEnergyCapacity(network);
     }
 
     /**
-     * BFS from a starting node, only visiting positions present in the given node list.
+     * BFS from a starting node, only visiting positions present in the given candidate set.
+     *
+     * @param start              the node to start BFS from
+     * @param candidatePositions pre-built set of valid positions to visit
+     * @return set of reachable positions within the candidate set
      */
-    private Set<BlockPos> bfsAmong(ConduitNodeImpl start, List<ConduitNodeImpl> candidates) {
-        Set<BlockPos> candidatePositions = new HashSet<>(candidates.size());
-        for (ConduitNodeImpl n : candidates) {
-            candidatePositions.add(n.getPos());
-        }
-
+    private static Set<BlockPos> bfsAmong(ConduitNodeImpl start, Set<BlockPos> candidatePositions) {
         Set<BlockPos> visited = new LinkedHashSet<>();
         Queue<ConduitNodeImpl> queue = new ArrayDeque<>();
 
@@ -385,17 +408,26 @@ public class ConduitNetworkManager {
                     network.removeNode(n);
                 }
 
+                // Pre-build position→node map once for all BFS calls + O(1) node lookup
+                Map<BlockPos, ConduitNodeImpl> unreachableMap = new HashMap<>(unreachable.size());
+                for (ConduitNodeImpl n : unreachable) {
+                    unreachableMap.put(n.getPos(), n);
+                }
+                Set<BlockPos> unreachablePositions = unreachableMap.keySet();
+
                 // BFS among unreachable to form new networks (may be >1 fragment)
                 Set<BlockPos> assigned = new LinkedHashSet<>();
                 for (ConduitNodeImpl orphan : unreachable) {
                     if (assigned.contains(orphan.getPos())) continue;
                     ConduitNetwork splitNetwork = createNetwork(conduitId);
-                    Set<BlockPos> fragment = bfsAmong(orphan, unreachable);
+                    Set<BlockPos> fragment = bfsAmong(orphan, unreachablePositions);
                     double fraction = (double) fragment.size() / (reachable.size() + unreachable.size());
-                    for (ConduitNodeImpl n : unreachable) {
-                        if (fragment.contains(n.getPos())) {
+                    // Iterate fragment positions directly — O(fragment) not O(unreachable)
+                    for (BlockPos fragmentPos : fragment) {
+                        ConduitNodeImpl n = unreachableMap.get(fragmentPos);
+                        if (n != null) {
                             splitNetwork.addNode(n);
-                            assigned.add(n.getPos());
+                            assigned.add(fragmentPos);
                         }
                     }
                     if (network.getContext() instanceof ConduitNetworkContext ctx) {
@@ -471,16 +503,20 @@ public class ConduitNetworkManager {
     }
 
     private void updateTickingStateForChunk(int chunkX, int chunkZ, boolean ticking) {
-        for (Map<BlockPos, ConduitNodeImpl> nodesMap : nodesByConduit.values()) {
-            for (ConduitNodeImpl node : nodesMap.values()) {
-                BlockPos pos = node.getPos();
-                if ((pos.getX() >> 4) == chunkX && (pos.getZ() >> 4) == chunkZ) {
-                    node.setTicking(ticking);
-                    if (node.getNetwork() != null) {
-                        node.getNetwork().invalidateCaches();
-                    }
-                }
+        long chunkKey = chunkKey(chunkX, chunkZ);
+        Set<ConduitNodeImpl> chunkNodes = nodesByChunk.get(chunkKey);
+        if (chunkNodes == null || chunkNodes.isEmpty()) return;
+
+        // Collect networks that need cache invalidation (deduplicate)
+        Set<ConduitNetwork> affectedNetworks = new HashSet<>();
+        for (ConduitNodeImpl node : chunkNodes) {
+            node.setTicking(ticking);
+            if (node.getNetwork() != null) {
+                affectedNetworks.add(node.getNetwork());
             }
+        }
+        for (ConduitNetwork net : affectedNetworks) {
+            net.invalidateCaches();
         }
     }
 
@@ -537,6 +573,32 @@ public class ConduitNetworkManager {
             networks.remove(network);
             if (networks.isEmpty()) {
                 networksByConduit.remove(conduitId);
+            }
+        }
+    }
+
+    // ---- Chunk spatial index helpers ----
+
+    private static long chunkKey(int chunkX, int chunkZ) {
+        return (long) chunkX & 0xFFFFFFFFL | ((long) chunkZ & 0xFFFFFFFFL) << 32;
+    }
+
+    private static long chunkKeyFromBlockPos(BlockPos pos) {
+        return chunkKey(pos.getX() >> 4, pos.getZ() >> 4);
+    }
+
+    private void addToChunkIndex(ConduitNodeImpl node) {
+        long key = chunkKeyFromBlockPos(node.getPos());
+        nodesByChunk.computeIfAbsent(key, k -> new HashSet<>()).add(node);
+    }
+
+    private void removeFromChunkIndex(ConduitNodeImpl node) {
+        long key = chunkKeyFromBlockPos(node.getPos());
+        Set<ConduitNodeImpl> set = nodesByChunk.get(key);
+        if (set != null) {
+            set.remove(node);
+            if (set.isEmpty()) {
+                nodesByChunk.remove(key);
             }
         }
     }

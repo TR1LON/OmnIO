@@ -10,7 +10,6 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 
 import java.util.*;
-import java.util.stream.Collectors;
 
 /**
  * Concrete implementation of {@link IConduitNetwork}.
@@ -204,13 +203,15 @@ public class ConduitNetwork implements IConduitNetwork {
     private void rebuildCachesIfDirty() {
         if (!cachesDirty) return;
 
-        tickingNodesCache = nodes.values().stream()
-                .filter(ConduitNodeImpl::isTicking)
-                .collect(Collectors.toCollection(ArrayList::new));
-
-        blockEndpointsCache = nodes.values().stream()
-                .filter(ConduitNodeImpl::isBlockEndpoint)
-                .collect(Collectors.toCollection(ArrayList::new));
+        // Single pass over all nodes to populate both caches
+        List<ConduitNodeImpl> ticking = new ArrayList<>();
+        List<ConduitNodeImpl> endpoints = new ArrayList<>();
+        for (ConduitNodeImpl node : nodes.values()) {
+            if (node.isTicking()) ticking.add(node);
+            if (node.isBlockEndpoint()) endpoints.add(node);
+        }
+        tickingNodesCache = ticking;
+        blockEndpointsCache = endpoints;
 
         cachesDirty = false;
     }
