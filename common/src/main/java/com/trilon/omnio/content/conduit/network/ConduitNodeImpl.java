@@ -181,6 +181,11 @@ public class ConduitNodeImpl implements IConduitNode {
         this.network = network;
     }
 
+    /**
+     * Equality is based solely on block position.
+     * This is safe because nodes are always scoped within a single conduit type
+     * (via {@link ConduitNetworkManager#nodesByConduit}), so positions are unique per scope.
+     */
     @Override
     public boolean equals(Object o) {
         if (this == o) return true;

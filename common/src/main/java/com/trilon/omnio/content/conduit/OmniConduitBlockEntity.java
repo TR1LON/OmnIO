@@ -195,6 +195,11 @@ public class OmniConduitBlockEntity extends BlockEntity {
         }
         connections.remove(conduitId);
 
+        // Disconnect neighbor bundles' connections for this conduit type
+        if (level != null && !level.isClientSide()) {
+            disconnectNeighborsFor(conduitId);
+        }
+
         // Notify the network manager to handle potential splits
         if (level instanceof ServerLevel serverLevel) {
             ConduitNetworkManager.get(serverLevel).onConduitRemoved(getBlockPos(), conduitId);
@@ -299,21 +304,9 @@ public class OmniConduitBlockEntity extends BlockEntity {
     public void onBlockRemoved() {
         if (level == null || level.isClientSide()) return;
 
-        for (Direction dir : Direction.values()) {
-            BlockPos neighborPos = getBlockPos().relative(dir);
-            BlockEntity neighborBE = level.getBlockEntity(neighborPos);
-            if (neighborBE instanceof OmniConduitBlockEntity neighborBundle) {
-                Direction opposite = dir.getOpposite();
-                for (ResourceLocation conduitId : conduitIds) {
-                    ConnectionContainer neighborContainer = neighborBundle.getConnectionContainer(conduitId);
-                    if (neighborContainer != null) {
-                        neighborContainer.disconnect(opposite);
-                    }
-                }
-                neighborBundle.invalidateShape();
-                neighborBundle.setChanged();
-                neighborBundle.syncToClient();
-            }
+        // Disconnect neighbors for all conduit types in this bundle
+        for (ResourceLocation conduitId : conduitIds) {
+            disconnectNeighborsFor(conduitId);
         }
 
         // Notify network manager that all conduit nodes at this position are removed
@@ -321,6 +314,28 @@ public class OmniConduitBlockEntity extends BlockEntity {
             ConduitNetworkManager manager = ConduitNetworkManager.get(serverLevel);
             for (ResourceLocation conduitId : conduitIds) {
                 manager.onConduitRemoved(getBlockPos(), conduitId);
+            }
+        }
+    }
+
+    /**
+     * Notify all 6 neighboring bundles to disconnect their connection for a specific conduit type.
+     * Called when removing a single conduit or when the block is destroyed.
+     */
+    private void disconnectNeighborsFor(ResourceLocation conduitId) {
+        if (level == null) return;
+
+        for (Direction dir : Direction.values()) {
+            BlockPos neighborPos = getBlockPos().relative(dir);
+            BlockEntity neighborBE = level.getBlockEntity(neighborPos);
+            if (neighborBE instanceof OmniConduitBlockEntity neighborBundle) {
+                ConnectionContainer neighborContainer = neighborBundle.getConnectionContainer(conduitId);
+                if (neighborContainer != null) {
+                    neighborContainer.disconnect(dir.getOpposite());
+                    neighborBundle.invalidateShape();
+                    neighborBundle.setChanged();
+                    neighborBundle.syncToClient();
+                }
             }
         }
     }

@@ -103,7 +103,7 @@ public class OmniConduitBlock extends Block implements EntityBlock, SimpleWaterl
     @Nullable
     @Override
     public <T extends BlockEntity> BlockEntityTicker<T> getTicker(Level level, BlockState state, BlockEntityType<T> type) {
-        // Only tick on the server side — network ticking is handled by ConduitNetworkSavedData
+        // No per-BE ticker — network ticking is driven by ConduitNetworkManager from the server tick event
         return null;
     }
 

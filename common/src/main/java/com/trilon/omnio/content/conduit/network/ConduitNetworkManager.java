@@ -8,9 +8,9 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.level.ServerLevel;
-import net.minecraft.world.level.block.entity.BlockEntity;
 
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Central manager for all conduit networks in a single server level.
@@ -38,8 +38,11 @@ public class ConduitNetworkManager {
 
     /**
      * Per-level manager instances. Cleared on server stop.
+     * Uses ConcurrentHashMap for thread-safety between tick and server-stop events.
+     * Note: unlike WeakHashMap, entries are NOT automatically GC'd — explicit
+     * cleanup via {@link #clearAll()} on server stop is required.
      */
-    private static final Map<ServerLevel, ConduitNetworkManager> INSTANCES = new WeakHashMap<>();
+    private static final Map<ServerLevel, ConduitNetworkManager> INSTANCES = new ConcurrentHashMap<>();
 
     /**
      * All nodes in this level, keyed by (conduitId, blockPos).
@@ -295,7 +298,9 @@ public class ConduitNetworkManager {
 
     /**
      * Called when a conduit's connections are re-evaluated (e.g., neighbor block changed).
-     * Updates the node's cached connection data and refreshes the network's caches.
+     * Updates the node's cached connection data, refreshes graph edges, and handles
+     * any topology changes (merges if new edges bridge separate networks, splits if
+     * removed edges disconnect parts of a network).
      */
     public void onConnectionsChanged(BlockPos pos, ResourceLocation conduitId, ConnectionContainer container) {
         Map<BlockPos, ConduitNodeImpl> nodesMap = nodesByConduit.get(conduitId);
@@ -306,15 +311,35 @@ public class ConduitNetworkManager {
 
         node.syncFromContainer(container);
 
-        // Refresh graph edges based on updated connection data
+        // Track topology changes as we refresh edges
+        Set<ConduitNetwork> networksToMerge = new LinkedHashSet<>();
+        boolean edgeRemoved = false;
+
+        if (node.getNetwork() != null) {
+            networksToMerge.add(node.getNetwork());
+        }
+
+        Set<Direction> conduitDirs = node.getConduitConnectedDirections();
+
         for (Direction dir : Direction.values()) {
             BlockPos neighborPos = pos.relative(dir);
             ConduitNodeImpl neighborNode = nodesMap.get(neighborPos);
 
-            if (neighborNode != null && node.getConduitConnectedDirections().contains(dir)) {
+            if (neighborNode != null && conduitDirs.contains(dir)) {
+                // Edge should exist
                 node.setNeighbor(dir, neighborNode);
                 neighborNode.setNeighbor(dir.getOpposite(), node);
+
+                // If the neighbor is in a different network, we need to merge
+                if (neighborNode.getNetwork() != null) {
+                    networksToMerge.add(neighborNode.getNetwork());
+                }
             } else {
+                // Edge should NOT exist
+                ConduitNodeImpl oldNeighbor = node.getNeighborNodes().get(dir);
+                if (oldNeighbor != null) {
+                    edgeRemoved = true;
+                }
                 node.setNeighbor(dir, null);
                 if (neighborNode != null) {
                     neighborNode.setNeighbor(dir.getOpposite(), null);
@@ -322,8 +347,61 @@ public class ConduitNetworkManager {
             }
         }
 
-        if (node.getNetwork() != null) {
-            node.getNetwork().invalidateCaches();
+        // Handle merges: if edges now bridge multiple networks, merge them
+        if (networksToMerge.size() > 1) {
+            Iterator<ConduitNetwork> it = networksToMerge.iterator();
+            ConduitNetwork primary = it.next();
+            while (it.hasNext()) {
+                ConduitNetwork other = it.next();
+                if (other != primary) {
+                    Constants.LOG.debug("Merging network {} into {} for {} (connection change)",
+                            other.getId(), primary.getId(), conduitId);
+                    primary.mergeFrom(other);
+                    removeNetwork(conduitId, other);
+                }
+            }
+        }
+
+        // Handle splits: if edges were removed, check if network is still connected
+        ConduitNetwork network = node.getNetwork();
+        if (edgeRemoved && network != null && network.size() > 1) {
+            Set<BlockPos> reachable = network.bfsReachable(node);
+            if (reachable.size() < network.size()) {
+                // Network is disconnected — split off the unreachable nodes
+                List<ConduitNodeImpl> unreachable = new ArrayList<>();
+                for (ConduitNodeImpl n : network.getAllNodes()) {
+                    if (!reachable.contains(n.getPos())) {
+                        unreachable.add(n);
+                    }
+                }
+                for (ConduitNodeImpl n : unreachable) {
+                    network.removeNode(n);
+                }
+
+                // BFS among unreachable to form new networks (may be >1 fragment)
+                Set<BlockPos> assigned = new LinkedHashSet<>();
+                for (ConduitNodeImpl orphan : unreachable) {
+                    if (assigned.contains(orphan.getPos())) continue;
+                    ConduitNetwork splitNetwork = createNetwork(conduitId);
+                    Set<BlockPos> fragment = bfsAmong(orphan, unreachable);
+                    double fraction = (double) fragment.size() / (reachable.size() + unreachable.size());
+                    for (ConduitNodeImpl n : unreachable) {
+                        if (fragment.contains(n.getPos())) {
+                            splitNetwork.addNode(n);
+                            assigned.add(n.getPos());
+                        }
+                    }
+                    if (network.getContext() instanceof ConduitNetworkContext ctx) {
+                        splitNetwork.setContext(ctx.split(fraction));
+                    }
+                    Constants.LOG.debug("Split off network {} ({} nodes) from {} for {} (connection change)",
+                            splitNetwork.getId(), splitNetwork.size(), network.getId(), conduitId);
+                }
+            }
+        }
+
+        if (network != null) {
+            network.invalidateCaches();
         }
     }
 
