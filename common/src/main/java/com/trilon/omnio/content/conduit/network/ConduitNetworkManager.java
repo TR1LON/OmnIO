@@ -114,12 +114,13 @@ public class ConduitNetworkManager {
         node.syncFromContainer(container);
         nodesMap.put(pos, node);
 
-        // Find neighbor nodes and wire up graph edges
+        // Find neighbor nodes and wire up graph edges — only where CONNECTED_CONDUIT exists
         Set<ConduitNetwork> neighborNetworks = new LinkedHashSet<>();
+        Set<Direction> connectedDirs = node.getConduitConnectedDirections();
         for (Direction dir : Direction.values()) {
             BlockPos neighborPos = pos.relative(dir);
             ConduitNodeImpl neighborNode = nodesMap.get(neighborPos);
-            if (neighborNode != null) {
+            if (neighborNode != null && connectedDirs.contains(dir)) {
                 // Wire bidirectional graph edges
                 node.setNeighbor(dir, neighborNode);
                 neighborNode.setNeighbor(dir.getOpposite(), node);
@@ -265,11 +266,9 @@ public class ConduitNetworkManager {
      * BFS from a starting node, only visiting positions present in the given node list.
      */
     private Set<BlockPos> bfsAmong(ConduitNodeImpl start, List<ConduitNodeImpl> candidates) {
-        Set<BlockPos> candidatePositions = new HashSet<>();
-        Map<BlockPos, ConduitNodeImpl> candidateMap = new HashMap<>();
+        Set<BlockPos> candidatePositions = new HashSet<>(candidates.size());
         for (ConduitNodeImpl n : candidates) {
             candidatePositions.add(n.getPos());
-            candidateMap.put(n.getPos(), n);
         }
 
         Set<BlockPos> visited = new LinkedHashSet<>();
@@ -415,7 +414,10 @@ public class ConduitNetworkManager {
      * Called from the platform-specific server tick event.
      */
     public void tickAllNetworks() {
-        for (Map.Entry<ResourceLocation, Set<ConduitNetwork>> entry : networksByConduit.entrySet()) {
+        // Snapshot the entry set to avoid ConcurrentModificationException
+        // if a ticker triggers block entity loads that modify networksByConduit
+        var snapshot = List.copyOf(networksByConduit.entrySet());
+        for (Map.Entry<ResourceLocation, Set<ConduitNetwork>> entry : snapshot) {
             ResourceLocation conduitId = entry.getKey();
             Set<ConduitNetwork> networks = entry.getValue();
 

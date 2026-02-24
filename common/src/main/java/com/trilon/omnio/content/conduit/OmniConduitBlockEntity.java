@@ -274,7 +274,13 @@ public class OmniConduitBlockEntity extends BlockEntity {
 
         // TODO: Check if neighbor block has a compatible capability for this conduit type
         // (IEnergyStorage for energy, IFluidHandler for fluid, IItemHandler for items)
-        // If so, set CONNECTED_BLOCK. For now, leave as DISCONNECTED.
+        // If so, set CONNECTED_BLOCK. For now, fall through to DISCONNECTED.
+
+        // No valid connection found — ensure any stale connection is cleared
+        ConnectionStatus currentStatus = container.getStatus(dir);
+        if (currentStatus != ConnectionStatus.DISCONNECTED && currentStatus != ConnectionStatus.DISABLED) {
+            container.disconnect(dir);
+        }
     }
 
     /**

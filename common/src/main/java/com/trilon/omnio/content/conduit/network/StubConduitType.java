@@ -2,12 +2,10 @@ package com.trilon.omnio.content.conduit.network;
 
 import com.trilon.omnio.api.conduit.IConduitTicker;
 import com.trilon.omnio.api.conduit.IConduitType;
-import com.trilon.omnio.api.conduit.network.IConduitNetwork;
 import com.trilon.omnio.api.tier.ITier;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.resources.ResourceLocation;
-import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.Level;
 
 /**
