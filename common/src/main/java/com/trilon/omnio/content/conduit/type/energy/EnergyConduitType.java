@@ -1,9 +1,10 @@
 package com.trilon.omnio.content.conduit.type.energy;
 
-import com.trilon.omnio.Constants;
 import com.trilon.omnio.api.conduit.IConduitTicker;
 import com.trilon.omnio.api.conduit.IConduitType;
+import com.trilon.omnio.api.conduit.network.IConduitNetworkContext;
 import com.trilon.omnio.api.transfer.ITransferHelper;
+
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.resources.ResourceLocation;
@@ -79,6 +80,18 @@ public class EnergyConduitType implements IConduitType<EnergyConduitTier> {
      */
     public ITransferHelper<Long> getTransferHelper() {
         return transferHelper;
+    }
+
+    @Override
+    public IConduitNetworkContext<?> createNetworkContext() {
+        return new EnergyConduitNetworkContext(tier.getCapacity());
+    }
+
+    @Override
+    public void recalculateContext(IConduitNetworkContext<?> context, int nodeCount) {
+        if (context instanceof EnergyConduitNetworkContext ctx) {
+            ctx.setCapacity(calculateNetworkCapacity(nodeCount));
+        }
     }
 
     /**

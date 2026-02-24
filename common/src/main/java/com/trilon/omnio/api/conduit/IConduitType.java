@@ -1,5 +1,6 @@
 package com.trilon.omnio.api.conduit;
 
+import com.trilon.omnio.api.conduit.network.IConduitNetworkContext;
 import com.trilon.omnio.api.tier.ITier;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
@@ -50,4 +51,26 @@ public interface IConduitType<T extends ITier> {
      * @return true if a conduit-to-conduit connection should be formed
      */
     boolean canConnectConduits(T selfTier, T otherTier);
+
+    /**
+     * Create the initial per-network mutable context for this conduit type.
+     * Called when a new network is formed. The returned context is initialized
+     * for a single-node network; capacity recalculation happens separately.
+     *
+     * @return a new context instance, or a default no-op context if not needed
+     */
+    default IConduitNetworkContext<?> createNetworkContext() {
+        return null; // null = use default ConduitNetworkContext
+    }
+
+    /**
+     * Recalculate capacity-related fields on the network context after nodes are
+     * added or removed. Called by the network manager after every topology change.
+     *
+     * @param context   the network's current context
+     * @param nodeCount the number of nodes now in the network
+     */
+    default void recalculateContext(IConduitNetworkContext<?> context, int nodeCount) {
+        // Default: no recalculation needed. Types with capacity pools override.
+    }
 }

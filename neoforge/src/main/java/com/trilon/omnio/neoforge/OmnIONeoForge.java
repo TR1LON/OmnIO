@@ -5,6 +5,8 @@ import com.trilon.omnio.OmnIOCommon;
 import com.trilon.omnio.content.conduit.network.ConduitNetworkManager;
 import com.trilon.omnio.neoforge.registry.NeoForgeRegistration;
 import com.trilon.omnio.neoforge.transfer.NeoForgeEnergyTransferHelper;
+import com.trilon.omnio.neoforge.transfer.NeoForgeFluidTransferHelper;
+import com.trilon.omnio.neoforge.transfer.NeoForgeItemTransferHelper;
 import com.trilon.omnio.registry.ConduitTypes;
 import net.neoforged.bus.api.IEventBus;
 import net.neoforged.fml.common.Mod;
@@ -41,8 +43,12 @@ public class OmnIONeoForge {
     private void onCommonSetup(FMLCommonSetupEvent event) {
         event.enqueueWork(() -> {
             NeoForgeRegistration.populateCommonReferences();
-            // Register conduit types with NeoForge energy transfer helper
-            ConduitTypes.register(NeoForgeEnergyTransferHelper.INSTANCE);
+            // Register conduit types with NeoForge platform-specific transfer helpers
+            ConduitTypes.register(
+                    NeoForgeEnergyTransferHelper.INSTANCE,
+                    NeoForgeFluidTransferHelper.INSTANCE,
+                    NeoForgeItemTransferHelper.INSTANCE
+            );
         });
     }
 
@@ -53,6 +59,7 @@ public class OmnIONeoForge {
         }
     }
 
+    @SuppressWarnings("unused") // parameter required by NeoForge event bus
     private void onServerStopped(ServerStoppedEvent event) {
         // Clear all cached network managers to prevent memory leaks.
         // Note: ConduitTypeRegistry is NOT cleared here — types are registered once

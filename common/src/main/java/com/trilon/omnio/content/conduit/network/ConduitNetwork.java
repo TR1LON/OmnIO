@@ -1,16 +1,22 @@
 package com.trilon.omnio.content.conduit.network;
 
-import com.trilon.omnio.api.conduit.ConnectionStatus;
-import com.trilon.omnio.api.conduit.IConduitNode;
+import java.util.ArrayDeque;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Queue;
+import java.util.Set;
+
 import com.trilon.omnio.api.conduit.IConduitType;
-import com.trilon.omnio.content.conduit.type.energy.EnergyConduitNetworkContext;
-import com.trilon.omnio.api.conduit.IConnectionConfig;
 import com.trilon.omnio.api.conduit.network.IConduitNetwork;
 import com.trilon.omnio.api.conduit.network.IConduitNetworkContext;
+
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
-
-import java.util.*;
 
 /**
  * Concrete implementation of {@link IConduitNetwork}.
@@ -108,6 +114,7 @@ public class ConduitNetwork implements IConduitNetwork {
     /**
      * @return unique network ID for this session (not persisted)
      */
+    @Override
     public long getId() {
         return id;
     }
@@ -174,11 +181,8 @@ public class ConduitNetwork implements IConduitNetwork {
         }
         other.nodes.clear();
 
-        // Merge contexts — match specific subtypes to ensure type-safe merge
-        if (context instanceof EnergyConduitNetworkContext thisEnergy
-                && other.context instanceof EnergyConduitNetworkContext otherEnergy) {
-            thisEnergy.mergeFrom(otherEnergy);
-        } else if (context instanceof ConduitNetworkContext thisCtx
+        // Merge contexts polymorphically — each subclass handles its own merge logic
+        if (context instanceof ConduitNetworkContext thisCtx
                 && other.context instanceof ConduitNetworkContext otherCtx) {
             thisCtx.mergeFrom(otherCtx);
         }

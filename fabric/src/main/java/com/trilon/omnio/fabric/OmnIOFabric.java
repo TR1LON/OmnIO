@@ -5,12 +5,14 @@ import com.trilon.omnio.OmnIOCommon;
 import com.trilon.omnio.content.conduit.network.ConduitNetworkManager;
 import com.trilon.omnio.fabric.registry.FabricRegistration;
 import com.trilon.omnio.fabric.transfer.FabricEnergyTransferHelper;
+import com.trilon.omnio.fabric.transfer.FabricFluidTransferHelper;
+import com.trilon.omnio.fabric.transfer.FabricItemTransferHelper;
 import com.trilon.omnio.registry.ConduitTypes;
+
 import net.fabricmc.api.ModInitializer;
+import net.fabricmc.fabric.api.event.lifecycle.v1.ServerChunkEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
-import net.fabricmc.fabric.api.event.lifecycle.v1.ServerChunkEvents;
-import net.minecraft.server.level.ServerLevel;
 
 /**
  * Fabric entry point for OmnIO.
@@ -22,8 +24,12 @@ public class OmnIOFabric implements ModInitializer {
         // Register all blocks, items, block entities
         FabricRegistration.init();
 
-        // Register conduit types with Fabric energy transfer helper
-        ConduitTypes.register(FabricEnergyTransferHelper.INSTANCE);
+        // Register conduit types with Fabric platform-specific transfer helpers
+        ConduitTypes.register(
+                FabricEnergyTransferHelper.INSTANCE,
+                FabricFluidTransferHelper.INSTANCE,
+                FabricItemTransferHelper.INSTANCE
+        );
 
         // Tick all conduit networks each server tick
         ServerTickEvents.END_SERVER_TICK.register(server -> {

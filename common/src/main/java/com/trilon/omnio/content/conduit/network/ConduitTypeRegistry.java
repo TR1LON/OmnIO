@@ -2,7 +2,6 @@ package com.trilon.omnio.content.conduit.network;
 
 import com.trilon.omnio.Constants;
 import com.trilon.omnio.api.conduit.IConduitType;
-import com.trilon.omnio.api.tier.ITier;
 import net.minecraft.resources.ResourceLocation;
 import org.jetbrains.annotations.Nullable;
 

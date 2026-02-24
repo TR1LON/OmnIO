@@ -1,9 +1,9 @@
 package com.trilon.omnio.api.conduit.network;
 
+import java.util.Collection;
+
 import com.trilon.omnio.api.conduit.IConduitNode;
 import com.trilon.omnio.api.conduit.IConduitType;
-
-import java.util.Collection;
 
 /**
  * Represents a connected graph of conduit nodes of the same type.
@@ -40,4 +40,9 @@ public interface IConduitNetwork {
      * @return the number of nodes in this network
      */
     int size();
+
+    /**
+     * @return a unique stable identifier for this network instance
+     */
+    long getId();
 }

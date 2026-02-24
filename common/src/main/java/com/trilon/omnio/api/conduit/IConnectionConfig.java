@@ -27,6 +27,14 @@ public interface IConnectionConfig {
     RedstoneMode getRedstoneMode();
 
     /**
+     * @return the channel index (0-15) for this connection, used by redstone conduits
+     *         to select which DyeColor channel to read/write signals on
+     */
+    default int getChannel() {
+        return 0;
+    }
+
+    /**
      * Transfer mode for a conduit connection side.
      */
     enum TransferMode {

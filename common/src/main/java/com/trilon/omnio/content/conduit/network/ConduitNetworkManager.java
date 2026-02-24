@@ -1,18 +1,28 @@
 package com.trilon.omnio.content.conduit.network;
 
+import java.util.ArrayDeque;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Iterator;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Queue;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+
 import com.trilon.omnio.Constants;
 import com.trilon.omnio.api.conduit.IConduitType;
 import com.trilon.omnio.content.conduit.ConnectionContainer;
 import com.trilon.omnio.content.conduit.OmniConduitBlockEntity;
-import com.trilon.omnio.content.conduit.type.energy.EnergyConduitNetworkContext;
-import com.trilon.omnio.content.conduit.type.energy.EnergyConduitType;
+
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.level.ServerLevel;
-
-import java.util.*;
-import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Central manager for all conduit networks in a single server level.
@@ -112,6 +122,12 @@ public class ConduitNetworkManager {
             // Refresh the connection data and clear stale neighbor edges
             // (neighbors may not have loaded yet during chunk reload)
             ConduitNodeImpl existing = nodesMap.get(pos);
+            // Clear stale reverse edges: former neighbors still point back to this node
+            for (Map.Entry<Direction, ConduitNodeImpl> entry : existing.getNeighborNodes().entrySet()) {
+                Direction dirToNeighbor = entry.getKey();
+                ConduitNodeImpl neighbor = entry.getValue();
+                neighbor.setNeighbor(dirToNeighbor.getOpposite(), null);
+            }
             existing.clearNeighbors();
             existing.syncFromContainer(container);
 
@@ -147,9 +163,12 @@ public class ConduitNetworkManager {
                         removeNetwork(conduitId, other);
                     }
                 }
-                recalculateEnergyCapacity(primary);
-            } else if (existing.getNetwork() != null) {
-                existing.getNetwork().invalidateCaches();
+                recalculateNetworkContext(primary);
+            } else {
+                ConduitNetwork net = existing.getNetwork();
+                if (net != null) {
+                    net.invalidateCaches();
+                }
             }
             return;
         }
@@ -181,7 +200,7 @@ public class ConduitNetworkManager {
             // No neighbors — create a new singleton network
             ConduitNetwork network = createNetwork(conduitId);
             network.addNode(node);
-            recalculateEnergyCapacity(network);
+            recalculateNetworkContext(network);
             Constants.LOG.debug("Created new network {} for {} at {}", network.getId(), conduitId, pos.toShortString());
         } else {
             // Merge all neighboring networks into one, then add the new node
@@ -196,7 +215,7 @@ public class ConduitNetworkManager {
                 }
             }
             primary.addNode(node);
-            recalculateEnergyCapacity(primary);
+            recalculateNetworkContext(primary);
         }
     }
 
@@ -330,20 +349,18 @@ public class ConduitNetworkManager {
 
             unassignedOrphans -= splitReachable.size();
 
-            // Split the context proportionally — match specific subtype to ensure correct split()
-            if (network.getContext() instanceof EnergyConduitNetworkContext energyCtx) {
-                splitNetwork.setContext(energyCtx.split(fraction));
-            } else if (network.getContext() instanceof ConduitNetworkContext ctx) {
+            // Split the context proportionally via polymorphic dispatch
+            if (network.getContext() instanceof ConduitNetworkContext ctx) {
                 splitNetwork.setContext(ctx.split(fraction));
             }
 
-            recalculateEnergyCapacity(splitNetwork);
+            recalculateNetworkContext(splitNetwork);
             Constants.LOG.debug("Split off network {} ({} nodes) from {} for {}",
                     splitNetwork.getId(), splitNetwork.size(), network.getId(), conduitId);
         }
 
         // Recalculate capacity for the original network after all splits
-        recalculateEnergyCapacity(network);
+        recalculateNetworkContext(network);
     }
 
     /**
@@ -442,7 +459,7 @@ public class ConduitNetworkManager {
                     removeNetwork(conduitId, other);
                 }
             }
-            recalculateEnergyCapacity(primary);
+            recalculateNetworkContext(primary);
         }
 
         // Handle splits: if edges were removed, check if network is still connected
@@ -489,22 +506,20 @@ public class ConduitNetworkManager {
                         }
                     }
                     unassignedOrphans2 -= fragment.size();
-                    // Match specific subtype to ensure correct split()
-                    if (network.getContext() instanceof EnergyConduitNetworkContext energyCtx) {
-                        splitNetwork.setContext(energyCtx.split(fraction));
-                    } else if (network.getContext() instanceof ConduitNetworkContext ctx) {
+                    // Split the context proportionally via polymorphic dispatch
+                    if (network.getContext() instanceof ConduitNetworkContext ctx) {
                         splitNetwork.setContext(ctx.split(fraction));
                     }
                     Constants.LOG.debug("Split off network {} ({} nodes) from {} for {} (connection change)",
                             splitNetwork.getId(), splitNetwork.size(), network.getId(), conduitId);
-                    recalculateEnergyCapacity(splitNetwork);
+                    recalculateNetworkContext(splitNetwork);
                 }
             }
         }
 
         if (network != null) {
             network.invalidateCaches();
-            recalculateEnergyCapacity(network);
+            recalculateNetworkContext(network);
         }
     }
 
@@ -623,9 +638,10 @@ public class ConduitNetworkManager {
         IConduitType<?> type = ConduitTypeRegistry.getOrStub(conduitId);
         ConduitNetwork network = new ConduitNetwork(type);
 
-        // Initialize type-specific network context
-        if (type instanceof EnergyConduitType energyType) {
-            network.setContext(new EnergyConduitNetworkContext(energyType.getTier().getCapacity()));
+        // Initialize type-specific network context via polymorphic factory
+        var context = type.createNetworkContext();
+        if (context != null) {
+            network.setContext(context);
         }
 
         networksByConduit.computeIfAbsent(conduitId, k -> new LinkedHashSet<>()).add(network);
@@ -701,17 +717,15 @@ public class ConduitNetworkManager {
         return count;
     }
 
-    // ---- Energy network context helpers ----
+    // ---- Network context helpers ----
 
     /**
-     * Recalculate the energy buffer capacity for a network based on its current node count.
-     * Called after nodes are added/removed to keep the pool capacity in sync.
+     * Recalculate the network context (e.g., buffer capacity) for a network
+     * based on its current node count. Delegates to the conduit type's
+     * polymorphic {@link IConduitType#recalculateContext} method.
+     * Called after nodes are added/removed to keep the context in sync.
      */
-    static void recalculateEnergyCapacity(ConduitNetwork network) {
-        if (network.getType() instanceof EnergyConduitType energyType
-                && network.getContext() instanceof EnergyConduitNetworkContext ctx) {
-            long newCapacity = energyType.calculateNetworkCapacity(network.size());
-            ctx.setCapacity(newCapacity);
-        }
+    static void recalculateNetworkContext(ConduitNetwork network) {
+        network.getType().recalculateContext(network.getContext(), network.size());
     }
 }

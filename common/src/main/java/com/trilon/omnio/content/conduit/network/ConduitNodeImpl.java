@@ -155,7 +155,8 @@ public class ConduitNodeImpl implements IConduitNode {
             ConnectionConfig original = container.getConfig(dir);
             connectionConfigs.put(dir, new ConnectionConfig(
                     original.getStatus(), original.getTransferMode(),
-                    original.getPriority(), original.getRedstoneMode()));
+                    original.getPriority(), original.getRedstoneMode(),
+                    original.getChannel()));
         }
     }
 

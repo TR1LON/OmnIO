@@ -1,7 +1,6 @@
 package com.trilon.omnio.fabric.transfer;
 
 import com.trilon.omnio.api.transfer.ITransferHelper;
-import com.trilon.omnio.content.conduit.type.energy.NoOpEnergyTransferHelper;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.world.level.Level;

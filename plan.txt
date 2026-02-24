@@ -22,8 +22,94 @@ KEY DECISIONS
 - Platform abstraction: Java ServiceLoader SPI
 - Capability bridge: Thin ITransferHelper<T> SPI in common/, implemented
   per-platform (NeoForge BlockCapability / Fabric Transfer API)
-- Network architecture: Persistent graph-based (EnderIO pattern)
-- Bundle: Multiple conduit types in a single block (EnderIO pattern)
+- Network architecture: Persistent graph-based conduit networks
+- Bundle: Multiple conduit types in a single block (up to 9)
+- Per-face multi-connect: Multiple conduits of the same type can
+  independently access the same face of an adjacent machine
+- Polymorphic context: IConduitType.createNetworkContext() factory,
+  eliminates instanceof chains in network manager
+- Multi-Channel: Same-type conduits in one bundle on different color
+  channels — each (type, channel) pair forms its own independent network
+- Hard limit: 9 conduits per bundle block (any mix of types/channels)
+
+================================================================================
+DESIGN NOTE: MULTI-CHANNEL CONDUIT BUNDLES
+================================================================================
+Concept:
+  A single conduit bundle block holds UP TO 9 CONDUITS (hard limit).
+  Conduits of the SAME TYPE can coexist in one bundle as long as they
+  are on DIFFERENT COLOR CHANNELS (16 DyeColor channels: white, orange,
+  magenta, light_blue, yellow, lime, pink, gray, light_gray, cyan, purple,
+  blue, brown, green, red, black).
+
+  Each (conduitTypeId, channel) pair = one "conduit slot" in the bundle.
+  Each slot forms its own independent network.
+
+Key Innovation — Per-Face Multi-Connect:
+  In most conduit mods, each face of a machine supports only ONE
+  connection per conduit type. OmnIO removes that restriction.
+  Multiple conduits of the same type on different channels can ALL
+  independently connect to the SAME FACE of an adjacent machine.
+
+  Example:
+    Machine with 3 item inputs accessible from its back face.
+    ONE bundle block behind the machine, containing 3 item conduits:
+      - Red channel   → routes ores from smelter to input slot 1
+      - Blue channel  → routes ingots from storage to input slot 2
+      - Green channel → routes fuel from coal bin to input slot 3
+    All three connect to the same face. Each has its own insert/extract
+    config, priority, and filter settings.
+
+    Diagram:
+      [Smelter] ──red──┐
+     [Storage] ──blue──┤ Bundle (3/9 slots) ── back ── [Machine]
+    [Coal Bin] ──green─┘
+
+Design Rules:
+  - 9 conduits max per bundle (hard limit, any mix of types + channels)
+  - Keying: ConduitSlot = (typeId, channel) — uniquely identifies each
+    conduit within a bundle
+  - Same type + same channel = same network (merge on connect)
+  - Same type + different channel = isolated networks (never merge)
+  - Channel = DyeColor ordinal (0-15), rendered as tint on conduit core
+  - Default channel = 0 (white) on first placement
+  - Channel changeable via GUI after placement
+
+Architectural Changes Required:
+  1. ConduitSlot record:
+     - New record: ConduitSlot(ResourceLocation typeId, int channel)
+     - Used as map key everywhere that previously used bare typeId
+     - equals/hashCode on both fields
+
+  2. OmniConduitBlockEntity:
+     - Change Map<ResourceLocation, ConnectionContainer>
+       to Map<ConduitSlot, ConnectionContainer>
+     - Enforce size <= 9 on addConduit()
+     - Per-(slot, face) connection config — multiple connections on
+       the same face for different slots
+
+  3. ConduitNetworkManager:
+     - Key networks by ConduitSlot instead of ResourceLocation
+     - onConduitAdded/Removed take ConduitSlot parameter
+     - Neighbor matching: only merge nodes with same ConduitSlot
+
+  4. ConduitItem:
+     - Stores channel in item NBT (or component in 1.21+)
+     - Default = white (0)
+     - Shift+scroll to pick channel before placement (optional UX)
+
+  5. Rendering (Phase 9):
+     - One conduit core per occupied slot in the bundle
+     - Core tinted by channel DyeColor
+     - Connectors drawn per (slot, face) pair
+
+  6. GUI (Phase 10):
+     - Left panel: slot grid showing up to 9 conduit slots
+     - Click a slot → right panel shows per-face config
+     - Channel color picker (16-color palette)
+     - Per-slot: insert/extract toggle, priority, redstone mode, filter
+
+Status: DESIGNED — not yet implemented. Requires touching Phases 3, 4, 9, 10.
 
 ================================================================================
 STEP 1: Initialize MultiLoader Template Project
@@ -166,9 +252,37 @@ STEP 6: Implement Per-Type Tickers
 Location: common/src/main/java/com/trilon/omnio/content/conduit/type/
 
   energy/   — pool-and-distribute, tier-scaled buffer + transfer rate
-  fluid/    — rate-limited, optional fluid locking, tier-scaled
-  item/     — round-robin extraction, priority insertion, filters, tier-scaled
-  redstone/ — signal propagation with 16 channel colors
+              Files: EnergyConduitType, EnergyConduitTier, EnergyConduitTicker,
+                     EnergyConduitNetworkContext, NoOpEnergyTransferHelper
+              Status: ✅ COMPLETE
+
+  fluid/    — pool-and-distribute with fluid locking, tier-scaled
+              Files: FluidConduitType, FluidConduitTier, FluidConduitTicker,
+                     FluidConduitNetworkContext, FluidResource,
+                     NoOpFluidTransferHelper
+              Status: ✅ COMPLETE
+
+  item/     — round-robin extraction, priority insertion, simulate-then-commit
+              Files: ItemConduitType, ItemConduitTier, ItemConduitTicker,
+                     NoOpItemTransferHelper
+              Status: ✅ COMPLETE (filters pending Phase 10 GUI)
+
+  redstone/ — 16-channel signal propagation (clear → read → write per tick)
+              Files: RedstoneConduitType, RedstoneConduitTier,
+                     RedstoneConduitTicker, RedstoneConduitNetworkContext
+              Status: ✅ COMPLETE
+
+  Platform transfer helpers:
+    NeoForge: NeoForgeEnergyTransferHelper ✅, NeoForgeFluidTransferHelper ✅,
+              NeoForgeItemTransferHelper ✅
+    Fabric:   FabricEnergyTransferHelper (stub), FabricFluidTransferHelper (stub),
+              FabricItemTransferHelper (stub)
+
+  API additions:
+    IFluidTransferHelper.java — platform-neutral fluid transfer
+    IItemTransferHelper.java  — platform-neutral item transfer
+    FluidResource.java        — vanilla-safe fluid identity + amount record
+    IConnectionConfig.getChannel() — per-connection channel index (0-15)
 
 ================================================================================
 STEP 7: Create Rendering and Interaction Layer
@@ -179,99 +293,113 @@ STEP 7: Create Rendering and Interaction Layer
   Facades:  cosmetic block overlay
 
 ================================================================================
-PROJECT PACKAGE STRUCTURE (COMPLETE)
+PROJECT PACKAGE STRUCTURE (CURRENT STATE)
 ================================================================================
 
 com.trilon.omnio
 ├── api                              [PUBLIC API — stable for addons]
 │   ├── conduit
-│   │   ├── IConduitType
-│   │   ├── IConduit
-│   │   ├── IConduitTicker
-│   │   ├── IConduitNode
-│   │   └── IConduitNetwork
-│   ├── connection
-│   │   ├── IConnectionConfig
-│   │   ├── ConnectionStatus
-│   │   └── ConnectionConfigType
-│   ├── network
-│   │   └── IConduitNetworkContext
+│   │   ├── IConduitType             Registry type key, ticker, connect logic
+│   │   ├── IConduit                 Core conduit interface
+│   │   ├── IConduitTicker           void tick(ServerLevel, network)
+│   │   ├── IConduitNode             Position + connections + per-side config
+│   │   ├── IConnectionConfig        Per-side settings + channel
+│   │   ├── ConnectionStatus         DISCONNECTED/CONNECTED_CONDUIT/BLOCK/DISABLED
+│   │   └── network
+│   │       ├── IConduitNetwork      Graph accessors: nodes, edges, context
+│   │       └── IConduitNetworkContext  Per-network mutable state
 │   ├── tier
-│   │   ├── BaseTier
+│   │   ├── BaseTier                 BASIC/ADVANCED/ELITE/ULTIMATE/CREATIVE
 │   │   └── ITier
 │   └── transfer
-│       └── ITransferHelper
+│       ├── ITransferHelper<T>       Platform-neutral generic transfer
+│       ├── IFluidTransferHelper     Fluid-specific transfer (filter param)
+│       ├── IItemTransferHelper      Item-specific transfer (ItemStack)
+│       └── FluidResource            Vanilla-safe fluid + amount record
 ├── content                          [INTERNAL — implementation]
 │   └── conduit
-│       ├── OmniConduitBlock
-│       ├── OmniConduitBlockEntity
-│       ├── ConnectionContainer
-│       ├── bundle
-│       │   └── ConduitBundleData
+│       ├── OmniConduitBlock         Bundle block
+│       ├── OmniConduitBlockEntity   Holds conduits + connections
+│       ├── ConduitItem              Item for placing conduits
+│       ├── ConnectionContainer      Per-direction status/config/filter
+│       ├── ConnectionConfig         Per-side connection settings + channel
 │       ├── network
-│       │   ├── ConduitNetwork
-│       │   ├── ConduitNodeImpl
-│       │   ├── ConduitNetworkContext
-│       │   └── ConduitNetworkSavedData
+│       │   ├── ConduitNetwork       Persistent graph (nodes + edges)
+│       │   ├── ConduitNodeImpl      Position, connections, per-side config
+│       │   ├── ConduitNetworkContext Base network context
+│       │   ├── ConduitNetworkManager Spatial index, BFS merge/split
+│       │   ├── ConduitTypeRegistry  Runtime conduit type lookup
+│       │   └── StubConduitType      Test/stub conduit type
 │       └── type
 │           ├── energy
-│           │   ├── EnergyConduit
-│           │   ├── EnergyConduitTier
-│           │   ├── EnergyConduitTicker
-│           │   ├── EnergyConduitConnectionConfig
-│           │   └── EnergyConduitNetworkContext
+│           │   ├── EnergyConduitType           ✅
+│           │   ├── EnergyConduitTier           ✅
+│           │   ├── EnergyConduitTicker         ✅
+│           │   ├── EnergyConduitNetworkContext  ✅
+│           │   └── NoOpEnergyTransferHelper    ✅
 │           ├── fluid
-│           │   ├── FluidConduit
-│           │   ├── FluidConduitTier
-│           │   ├── FluidConduitTicker
-│           │   ├── FluidConduitConnectionConfig
-│           │   └── FluidConduitNetworkContext
+│           │   ├── FluidConduitType            ✅
+│           │   ├── FluidConduitTier            ✅
+│           │   ├── FluidConduitTicker          ✅
+│           │   ├── FluidConduitNetworkContext   ✅
+│           │   └── NoOpFluidTransferHelper     ✅
 │           ├── item
-│           │   ├── ItemConduit
-│           │   ├── ItemConduitTier
-│           │   ├── ItemConduitTicker
-│           │   ├── ItemConduitConnectionConfig
-│           │   └── ItemConduitNodeData
+│           │   ├── ItemConduitType             ✅
+│           │   ├── ItemConduitTier             ✅
+│           │   ├── ItemConduitTicker           ✅
+│           │   └── NoOpItemTransferHelper      ✅
 │           └── redstone
-│               ├── RedstoneConduit
-│               ├── RedstoneConduitTicker
-│               ├── RedstoneConduitConnectionConfig
-│               └── RedstoneConduitNetworkContext
-├── client
-│   ├── ConduitBundleRenderState
-│   ├── ConduitModelParts
-│   ├── ConduitShape
-│   ├── ConduitMenu
-│   └── ConduitScreen
-├── config
-│   └── TierConfig
+│               ├── RedstoneConduitType         ✅
+│               ├── RedstoneConduitTier         ✅
+│               ├── RedstoneConduitTicker       ✅
+│               └── RedstoneConduitNetworkContext ✅
 ├── platform
-│   └── IPlatformHelper
+│   └── IPlatformHelper              ServiceLoader SPI interface
 ├── registry
-│   ├── OmnIORegistries
-│   ├── OmnIOBlocks
-│   ├── OmnIOBlockEntities
-│   ├── OmnIOItems
-│   ├── OmnIOMenuTypes
-│   ├── OmnIOCreativeTabs
-│   └── ConduitTypes
-├── Constants
-└── OmnIOCommon
+│   ├── OmnIORegistries              Custom DeferredRegister
+│   ├── OmnIOBlocks                  Block registration
+│   ├── OmnIOBlockEntities           Block entity registration
+│   ├── OmnIOItems                   Item registration
+│   ├── OmnIOMenuTypes               Menu type registration (stub)
+│   ├── OmnIOCreativeTabs            Creative tab registration
+│   └── ConduitTypes                 Registers all 13 conduit types
+├── Constants                        MOD_ID, mod name, logger
+└── OmnIOCommon                      Shared init logic
+
+Platform modules:
+  neoforge/
+    ├── OmnIONeoForge                @Mod entry + event wiring
+    ├── NeoForgePlatformHelper       SPI impl
+    ├── NeoForgeRegistration         Deferred register binding
+    └── transfer/
+        ├── NeoForgeEnergyTransferHelper  ✅ IEnergyStorage bridge
+        ├── NeoForgeFluidTransferHelper   ✅ IFluidHandler bridge
+        └── NeoForgeItemTransferHelper    ✅ IItemHandler bridge
+
+  fabric/
+    ├── OmnIOFabric                  ModInitializer entry
+    ├── FabricPlatformHelper         SPI impl
+    ├── FabricRegistration           Registry binding
+    └── transfer/
+        ├── FabricEnergyTransferHelper    stub (TODO: Team Reborn Energy)
+        ├── FabricFluidTransferHelper     stub (TODO: Fabric Transfer API v2)
+        └── FabricItemTransferHelper      stub (TODO: Fabric Transfer API v2)
 
 ================================================================================
 IMPLEMENTATION ORDER
 ================================================================================
-Phase 1:  Project skeleton + build system + GitHub
-Phase 2:  Tier system + conduit type registry
-Phase 3:  Bundle block + block entity (placement/removal, no transfer)
-Phase 4:  Network graph (formation, merge, split, persistence)
-Phase 5:  Energy conduit ticker (first working transfer type)
-Phase 6:  Fluid conduit ticker
-Phase 7:  Item conduit ticker
-Phase 8:  Redstone conduit ticker
-Phase 9:  Rendering (custom model, shapes, tier colors)
-Phase 10: GUI / menu (connection configuration)
-Phase 11: Facades
-Phase 12: Fabric platform implementation
-Phase 13: API stabilization + documentation for addons
+Phase 1:  Project skeleton + build system + GitHub              ✅ DONE
+Phase 2:  Tier system + conduit type registry                   ✅ DONE
+Phase 3:  Bundle block + block entity (placement/removal)       ✅ DONE
+Phase 4:  Network graph (formation, merge, split, persistence)  ✅ DONE (SavedData pending)
+Phase 5:  Energy conduit ticker (first working transfer type)   ✅ DONE
+Phase 6:  Fluid conduit ticker                                  ✅ DONE
+Phase 7:  Item conduit ticker                                   ✅ DONE
+Phase 8:  Redstone conduit ticker                               ✅ DONE
+--------  Multi-channel bundle rework (see design note above)   🔲 NEXT
+Phase 9:  Rendering (custom model, shapes, tier colors)         🔲 TODO
+Phase 10: GUI / menu (connection configuration, channel picker) 🔲 TODO
+Phase 11: Facades                                               🔲 TODO
+Phase 12: Fabric platform implementation (real API bridges)     🔲 TODO
+Phase 13: API stabilization + documentation for addons          🔲 TODO
 ================================================================================

@@ -1,10 +1,20 @@
 package com.trilon.omnio.content.conduit;
 
+import java.util.Collections;
+import java.util.EnumSet;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
+import java.util.Map;
+import java.util.Set;
+
+import org.jetbrains.annotations.Nullable;
+
 import com.trilon.omnio.Constants;
 import com.trilon.omnio.api.conduit.ConnectionStatus;
 import com.trilon.omnio.api.conduit.IConduitType;
 import com.trilon.omnio.content.conduit.network.ConduitNetworkManager;
 import com.trilon.omnio.content.conduit.network.ConduitTypeRegistry;
+
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.core.HolderLookup;
@@ -21,9 +31,6 @@ import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.entity.BlockEntityType;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.shapes.VoxelShape;
-import org.jetbrains.annotations.Nullable;
-
-import java.util.*;
 
 /**
  * The block entity for {@link OmniConduitBlock}.
@@ -261,6 +268,10 @@ public class OmniConduitBlockEntity extends BlockEntity {
             // Check if neighbor has the same conduit type → conduit-to-conduit
             if (neighborBundle.hasConduit(conduitId)) {
                 ConnectionStatus oldStatus = container.getStatus(dir);
+                // Don't override player-disabled connections
+                if (oldStatus == ConnectionStatus.DISABLED) {
+                    return false;
+                }
                 container.setConfig(dir, ConnectionConfig.conduitConnection());
 
                 // Also set the reverse connection on the neighbor
@@ -363,6 +374,11 @@ public class OmniConduitBlockEntity extends BlockEntity {
                     neighborBundle.invalidateShape();
                     neighborBundle.setChanged();
                     neighborBundle.syncToClient();
+                    // Sync the neighbor's node cache so graph state stays consistent
+                    if (level instanceof ServerLevel serverLevel) {
+                        ConduitNetworkManager.get(serverLevel)
+                                .onConnectionsChanged(neighborPos, conduitId, neighborContainer);
+                    }
                 }
             }
         }

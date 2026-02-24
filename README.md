@@ -6,171 +6,168 @@ OmnIO is a multi-loader (NeoForge + Fabric) Minecraft mod providing a tiered, un
 
 ## Features
 
-- **Bundle Architecture** — Place energy, fluid, item, and redstone conduits in a single block
+- **Bundle Architecture** — Up to 9 conduits in a single block — energy, fluid, item, and redstone side by side
+- **Multi-Channel Routing** — Same-type conduits on different color channels coexist in one bundle, each independently connecting to adjacent machines (even on the same face)
 - **Tiered System** — Basic, Advanced, Elite, Ultimate, and Creative tiers with increasing throughput
-- **Graph-Based Networks** — Efficient persistent networks with automatic merge/split
+- **Graph-Based Networks** — Efficient persistent networks with automatic merge/split via BFS
 - **Priority & Filtering** — Per-connection insert/extract modes, priorities, redstone control, and item filters
-- **Facades** — Cosmetic block overlays to hide conduits
+- **Facades** — Cosmetic block overlays to hide conduits (planned)
 - **Extensible API** — Third-party mods can register custom conduit types
 
 ## Conduit Types
 
 | Type | Description | Tiered |
 |------|-------------|--------|
-| Energy Conduit | Transfers Forge Energy (FE) | ✅ Basic → Ultimate |
-| Fluid Conduit | Transfers fluids (mB) | ✅ Basic → Ultimate |
-| Item Conduit | Transfers items with filtering | ✅ Basic → Ultimate |
-| Redstone Conduit | 16-channel redstone signals | ❌ Single tier |
+| Energy Conduit | Transfers Forge Energy (FE) | ✅ Basic → Ultimate + Creative |
+| Fluid Conduit | Transfers fluids (mB) with fluid locking | ✅ Basic → Ultimate + Creative |
+| Item Conduit | Transfers items with round-robin & filtering | ✅ Basic → Ultimate + Creative |
+| Redstone Conduit | 16-channel signal propagation | ❌ Single tier |
 
 ---
 
-## 🚧 Work-In-Progress — Implementation Status
+## Project Status
 
-### Phase 1: Project Skeleton + Build System ✅
-- [x] Multi-loader Gradle structure (`common/`, `fabric/`, `neoforge/`)
-- [x] `Constants.java` — MOD_ID, mod name, logger
-- [x] `OmnIOCommon.java` — shared init logic
-- [x] `IPlatformHelper.java` — ServiceLoader SPI interface
-- [x] `NeoForgePlatformHelper.java` — NeoForge SPI implementation
-- [x] `FabricPlatformHelper.java` — Fabric SPI implementation
-- [x] `OmnIONeoForge.java` — `@Mod` entry point
-- [x] `OmnIOFabric.java` — `ModInitializer` entry point
-- [x] `gradle.properties` — MC 1.21.1, Java 21, NeoForge 21.1.77, Fabric 0.16.9
-- [x] `.gitignore`, `LICENSE` (MIT), `README.md`
-- [x] Git repository initialized
+### Overall Progress: ~60%
 
-### Phase 2: Tier System + Conduit Type Registry ✅
-- [x] `BaseTier.java` — Enum (BASIC, ADVANCED, ELITE, ULTIMATE, CREATIVE) with `StringRepresentable` codec
-- [x] `ITier.java` — Tier interface (`getBaseTier()`)
-- [x] `EnergyConduitTier.java` — Tiered capacity & transfer rates
-- [x] `FluidConduitTier.java` — Tiered capacity & transfer rates
-- [x] `ItemConduitTier.java` — Tiered stack size & speed
-- [x] `IConduitType.java` — Registry type key, codec, capability ID
-- [x] `OmnIORegistries.java` — Custom DeferredRegister for CONDUIT_TYPES
-- [x] `ConduitTypes.java` — Registers ENERGY, FLUID, ITEM, REDSTONE
-- [x] `ConduitTypeRegistry.java` — Runtime conduit type lookup
+| Area | Status | Notes |
+|------|--------|-------|
+| Build System | ✅ Done | Gradle multi-loader, MC 1.21.1, Java 21 |
+| Tier System | ✅ Done | 5 tiers, per-conduit-type rates |
+| Bundle Block | ✅ Done | Placement, removal, neighbor evaluation |
+| Network Graph | ✅ Done | BFS merge/split, chunk load/unload |
+| Energy Transfer | ✅ Done | Pool-and-distribute, NeoForge IEnergyStorage bridge |
+| Fluid Transfer | ✅ Done | Pool-and-distribute, fluid locking, NeoForge IFluidHandler bridge |
+| Item Transfer | ✅ Done | Round-robin extract, priority insert, simulate-then-commit |
+| Redstone Signals | ✅ Done | 16-channel propagation, DyeColor mapping |
+| Network Persistence | 🔲 Todo | SavedData serialization to disk |
+| Multi-Channel Rework | 🔲 Todo | ConduitSlot(typeId, channel) keying throughout |
+| Rendering | 🔲 Todo | Custom model, VoxelShape, tier tinting |
+| GUI / Menu | 🔲 Todo | Connection config, channel picker, filters |
+| Facades | 🔲 Todo | Cosmetic block overlays |
+| Fabric Real Impls | 🔲 Todo | Team Reborn Energy, Fabric Transfer API v2 |
+| API Docs | 🔲 Todo | Javadoc, addon guide |
 
-### Phase 3: Bundle Block + Block Entity ✅
-- [x] `OmniConduitBlock.java` — Single block for all conduit types, VoxelShape
-- [x] `OmniConduitBlockEntity.java` — Holds conduits, connections, nodes; evaluateConnection with status-change guard
-- [x] `ConduitItem.java` — Item for placing conduits
-- [x] `ConnectionContainer.java` — Per-direction status/config/filter
-- [x] `ConnectionConfig.java` — Per-side connection settings
-- [x] `ConnectionStatus.java` — DISCONNECTED, CONNECTED_CONDUIT, CONNECTED_BLOCK, DISABLED
-- [x] `IConnectionConfig.java` — Connection config interface
-- [x] `OmnIOBlocks.java` — Block registration
-- [x] `OmnIOBlockEntities.java` — Block entity registration
-- [x] `OmnIOItems.java` — Item registration
-- [x] `OmnIOCreativeTabs.java` — Creative tab registration
-- [x] `NeoForgeRegistration.java` — NeoForge deferred register binding
-- [x] `FabricRegistration.java` — Fabric registry binding
+---
 
-### Phase 4: Network Graph Layer ✅
-- [x] `IConduitNetwork.java` — Graph accessors: nodes, edges, context
-- [x] `IConduitNetworkContext.java` — Per-network mutable state interface
-- [x] `IConduitNode.java` — Position + connections + per-side config interface
-- [x] `ConduitNetwork.java` — Persistent graph (nodes + edges), AtomicLong IDs, single-pass cache rebuild
-- [x] `ConduitNodeImpl.java` — Position, connections, per-side config, defensive copy
-- [x] `ConduitNetworkContext.java` — Base network context implementation
-- [x] `ConduitNetworkManager.java` — Spatial index, optimized BFS merge/split, stale edge cleanup
-- [x] `StubConduitType.java` — Test/stub conduit type
-- [ ] `ConduitNetworkSavedData.java` — Persistence to disk via `SavedData`
+## Roadmap
 
-### Phase 5: Energy Conduit Ticker ✅
-- [x] `IConduit.java` — Core conduit interface
-- [x] `IConduitTicker.java` — `void tick(ServerLevel, conduit, network)`
-- [x] `ITransferHelper.java` — Platform-neutral transfer abstraction
-- [x] `EnergyConduitType.java` — Energy conduit type with overflow guard
-- [x] `EnergyConduitTicker.java` — Pool-and-distribute with priority sort, redstone control
-- [x] `EnergyConduitNetworkContext.java` — Energy buffer with merge/split
-- [x] `NeoForgeEnergyTransferHelper.java` — Bridges to `IEnergyStorage` capability (fully functional)
-- [x] `NoOpEnergyTransferHelper.java` — No-op fallback for tests
-- [ ] `EnergyConduit.java` — Dedicated energy conduit class (logic currently in EnergyConduitType)
-- [ ] `EnergyConduitConnectionConfig.java` — Energy-specific per-side connection config
+### Completed (Phases 1–8)
 
-### Phase 6: Fluid Conduit Ticker ❌
-- [x] `FluidConduitTier.java` — Tier definitions only
-- [ ] `FluidConduit.java` — Fluid conduit implementation
-- [ ] `FluidConduitTicker.java` — Rate-limited, optional fluid locking, tier-scaled
-- [ ] `FluidConduitConnectionConfig.java` — Fluid-specific per-side connection config
-- [ ] `FluidConduitNetworkContext.java` — Fluid buffer with merge/split
-- [ ] Platform fluid transfer helpers (NeoForge `IFluidHandler` / Fabric Transfer API)
+Server-side logic is fully functional on NeoForge. All four conduit types (energy, fluid, item, redstone) work with proper network formation, transfer, merge/split, and redstone control.
 
-### Phase 7: Item Conduit Ticker ❌
-- [x] `ItemConduitTier.java` — Tier definitions only
-- [ ] `ItemConduit.java` — Item conduit implementation
-- [ ] `ItemConduitTicker.java` — Round-robin extraction, priority insertion, filters, tier-scaled
-- [ ] `ItemConduitConnectionConfig.java` — Item-specific per-side connection config
-- [ ] `ItemConduitNodeData.java` — Per-node item transfer state
-- [ ] Platform item transfer helpers (NeoForge `IItemHandler` / Fabric Transfer API)
+**Files implemented:** 47 Java source files across `common/`, `neoforge/`, `fabric/` modules.
 
-### Phase 8: Redstone Conduit Ticker ❌
-- [ ] `RedstoneConduit.java` — Redstone conduit implementation (single tier)
-- [ ] `RedstoneConduitTicker.java` — Signal propagation with 16 channel colors
-- [ ] `RedstoneConduitConnectionConfig.java` — Channel/mode config per side
-- [ ] `RedstoneConduitNetworkContext.java` — Per-network signal state
+### Next Steps (in order)
 
-### Phase 9: Rendering ❌
-- [ ] Custom `IUnbakedGeometry` (NeoForge) / `BakedModel` (Fabric) for conduit bundle
-- [ ] `ConduitBundleRenderState.java` — Render state snapshot for model
-- [ ] `ConduitModelParts.java` — Conduit core + connector model parts
-- [ ] `ConduitShape.java` — Per-conduit VoxelShape for hit detection
+#### Step 1: Network Persistence (`ConduitNetworkSavedData`)
+Save and restore conduit networks across world reloads using Minecraft's `SavedData` API.
+
+- [ ] `ConduitNetworkSavedData.java` — serialize all networks + node data to NBT
+- [ ] Integrate with `ConduitNetworkManager` load/save hooks
+- [ ] Handle missing conduit types gracefully (mod removal scenario)
+
+#### Step 2: Multi-Channel Bundle Rework
+Introduce `ConduitSlot(typeId, channel)` keying so the same conduit type can exist multiple times per bundle on different color channels.
+
+- [ ] `ConduitSlot.java` — record with `ResourceLocation typeId` + `int channel`
+- [ ] `OmniConduitBlockEntity` — change `Map<ResourceLocation, ...>` to `Map<ConduitSlot, ...>`
+- [ ] `ConduitNetworkManager` — key networks by `ConduitSlot` instead of `ResourceLocation`
+- [ ] `ConduitItem` — store channel in item data component (default = white/0)
+- [ ] Enforce 9-conduit max per bundle
+- [ ] Per-`(slot, face)` connection config (multiple connections on same face)
+
+#### Step 3: Rendering
+Custom block model rendering for conduit bundles with per-conduit cores, connectors, and tier-based tinting.
+
+- [ ] `ConduitBundleModel.java` — custom `IUnbakedGeometry` (NeoForge) / `BakedModel` (Fabric)
+- [ ] `ConduitShape.java` — per-conduit VoxelShape for hit detection and ray tracing
+- [ ] Conduit core + connector model parts (procedural geometry)
 - [ ] Tier-based color tinting
-- [ ] Block Entity Renderer for animated overlays
+- [ ] Channel-based DyeColor tinting on conduit cores
+- [ ] Block Entity Renderer for animated overlays (optional)
 
-### Phase 10: GUI / Menu ❌
-- [x] `OmnIOMenuTypes.java` — Menu type registration (stub only)
-- [ ] `ConduitMenu.java` — Server-side container for connection configuration
-- [ ] `ConduitScreen.java` — Client-side GUI screen
-- [ ] Per-side insert/extract toggle
-- [ ] Priority slider
-- [ ] Redstone control mode selector
+#### Step 4: GUI / Menu
+In-world configuration screen for conduit connections.
+
+- [ ] `ConduitMenu.java` — server-side container for connection configuration
+- [ ] `ConduitScreen.java` — client-side GUI screen
+- [ ] Bundle overview panel (slot grid showing up to 9 conduits)
+- [ ] Per-connection: insert/extract toggle, priority slider, redstone mode selector
+- [ ] Channel color picker (16-color DyeColor palette per slot)
 - [ ] Item filter slots (item conduit)
 - [ ] Fluid lock toggle (fluid conduit)
 
-### Phase 11: Facades ❌
-- [ ] Facade item + recipe
-- [ ] Facade block state rendering (mimics target block appearance)
-- [ ] Facade placement / removal interaction
-- [ ] Facade data persistence in block entity
+#### Step 5: Facades
+Cosmetic block overlays that hide conduits behind the appearance of other blocks.
 
-### Phase 12: Fabric Platform Implementation 🔄
-- [x] `OmnIOFabric.java` — Entry point + mod initialization
-- [x] `FabricPlatformHelper.java` — Platform SPI implementation
-- [x] `FabricRegistration.java` — Registry binding
-- [ ] `FabricEnergyTransferHelper.java` — Fabric Energy API integration (currently a stub)
-- [ ] Fabric fluid transfer helper (Fabric Transfer API)
-- [ ] Fabric item transfer helper (Fabric Transfer API)
+- [ ] Facade item + crafting recipe
+- [ ] Facade rendering (mimic target block appearance)
+- [ ] Facade placement / removal interaction
+- [ ] Facade data persistence in block entity NBT
+
+#### Step 6: Fabric Platform Implementation
+Replace transfer helper stubs with real Fabric API bridges.
+
+- [ ] `FabricEnergyTransferHelper` — Team Reborn Energy API bridge
+- [ ] `FabricFluidTransferHelper` — Fabric Transfer API v2 bridge
+- [ ] `FabricItemTransferHelper` — Fabric Transfer API v2 bridge
 - [ ] Fabric rendering integration (custom BakedModel)
 - [ ] Fabric menu/screen registration
 
-### Phase 13: API Stabilization + Documentation ❌
-- [ ] Freeze public API interfaces (`api/` package)
+#### Step 7: API Stabilization + Documentation
+Freeze public API, document everything, provide addon examples.
+
+- [ ] Freeze `api/` package interfaces
 - [ ] Javadoc on all public API types
+- [ ] `TierConfig.java` — config-file overridable tier values
 - [ ] Third-party addon example / guide
-- [ ] `ConnectionConfigType.java` — Typed config factory + codec
-- [ ] `ConduitBundleData.java` — Bundle serialization data class
-- [ ] `TierConfig.java` — Config-file overridable tier values
+- [ ] `ConduitBundleData.java` — bundle serialization data class
 
 ---
 
-### Overall Progress: **~40%**
+## Architecture
 
-| Phase | Status |
-|-------|--------|
-| 1. Project Skeleton | ✅ Complete |
-| 2. Tier System | ✅ Complete |
-| 3. Bundle Block | ✅ Complete |
-| 4. Network Graph | ✅ Complete (persistence pending) |
-| 5. Energy Conduit | ✅ Complete (NeoForge-side) |
-| 6. Fluid Conduit | ❌ Not started |
-| 7. Item Conduit | ❌ Not started |
-| 8. Redstone Conduit | ❌ Not started |
-| 9. Rendering | ❌ Not started |
-| 10. GUI / Menu | ❌ Not started |
-| 11. Facades | ❌ Not started |
-| 12. Fabric Platform | 🔄 Partial (stubs only) |
-| 13. API Docs | ❌ Not started |
+### Multi-Channel Conduit Bundles
+
+A single bundle block holds **up to 9 conduits** (hard limit). Conduits of the **same type** can coexist in one bundle as long as they are on **different color channels** (16 DyeColor-based channels). Each `(type, channel)` pair forms its own independent network.
+
+**Key innovation:** every conduit in a bundle independently connects to adjacent blocks — including the **same face** of the same machine. Multiple item conduits on channels red/blue/green can all connect to the *back face* of a machine simultaneously, each routing to a different inventory slot.
+
+```
+  [Smelter] ──red──┐
+ [Storage] ──blue──┤ Bundle (3 item conduits) ── back face ── [Machine]
+[Coal Bin] ──green─┘
+```
+
+**Design rules:**
+- **9 conduits max** per bundle — any mix of types and channels
+- Bundle keying: `ConduitSlot(typeId, channel)` — two item conduits on different channels are separate entries
+- Same type + same channel = same network; different channels = isolated networks
+- Channel is a DyeColor (0–15), visible in rendering and GUI
+- Default channel = 0 (white) when first placed
+
+### Transfer Patterns
+
+| Conduit | Pattern | Details |
+|---------|---------|---------|
+| Energy | Pool-and-distribute | Extract into shared buffer → push to targets by priority |
+| Fluid | Pool-and-distribute | Same as energy, with single-fluid lock per network |
+| Item | Instant pass-through | Round-robin extract → simulate-then-commit insert by priority |
+| Redstone | Channel propagation | Clear → read from EXTRACT endpoints → write to INSERT endpoints |
+
+### Platform Abstraction
+
+```
+common/         ← Vanilla-only code, ITransferHelper<T> SPI
+├── api/        ← Public API interfaces (stable)
+├── content/    ← Internal implementation
+└── registry/   ← Registration helpers
+
+neoforge/       ← IEnergyStorage, IFluidHandler, IItemHandler bridges
+fabric/         ← Stubs (pending: Team Reborn Energy, Fabric Transfer API v2)
+```
+
+Transfer helpers use Java ServiceLoader (`IPlatformHelper`) so common code never imports platform-specific classes.
 
 ---
 
@@ -180,12 +177,12 @@ OmnIO is a multi-loader (NeoForge + Fabric) Minecraft mod providing a tiered, un
 ./gradlew build
 ```
 
-### NeoForge
+### NeoForge only
 ```bash
 ./gradlew :neoforge:build
 ```
 
-### Fabric
+### Fabric only
 ```bash
 ./gradlew :fabric:build
 ```

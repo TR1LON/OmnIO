@@ -2,6 +2,7 @@ package com.trilon.omnio.content.conduit;
 
 import com.trilon.omnio.api.conduit.ConnectionStatus;
 import com.trilon.omnio.api.conduit.IConnectionConfig;
+
 import net.minecraft.nbt.CompoundTag;
 
 /**
@@ -15,19 +16,27 @@ public class ConnectionConfig implements IConnectionConfig {
     private TransferMode transferMode;
     private int priority;
     private RedstoneMode redstoneMode;
+    /** Redstone conduit channel (0-15, maps to DyeColor). Ignored by non-redstone conduits. */
+    private int channel;
 
     public ConnectionConfig() {
         this.status = ConnectionStatus.DISCONNECTED;
         this.transferMode = TransferMode.DISABLED;
         this.priority = 0;
         this.redstoneMode = RedstoneMode.ALWAYS_ACTIVE;
+        this.channel = 0;
     }
 
     public ConnectionConfig(ConnectionStatus status, TransferMode transferMode, int priority, RedstoneMode redstoneMode) {
+        this(status, transferMode, priority, redstoneMode, 0);
+    }
+
+    public ConnectionConfig(ConnectionStatus status, TransferMode transferMode, int priority, RedstoneMode redstoneMode, int channel) {
         this.status = status;
         this.transferMode = transferMode;
         this.priority = priority;
         this.redstoneMode = redstoneMode;
+        this.channel = Math.max(0, Math.min(15, channel));
     }
 
     @Override
@@ -67,6 +76,18 @@ public class ConnectionConfig implements IConnectionConfig {
     }
 
     /**
+     * @return the redstone channel (0-15) for this connection
+     */
+    @Override
+    public int getChannel() {
+        return channel;
+    }
+
+    public void setChannel(int channel) {
+        this.channel = Math.max(0, Math.min(15, channel));
+    }
+
+    /**
      * Cycle the transfer mode to the next value.
      * DISABLED → EXTRACT → INSERT → BOTH → DISABLED
      */
@@ -89,6 +110,7 @@ public class ConnectionConfig implements IConnectionConfig {
     private static final String TAG_TRANSFER_MODE = "TransferMode";
     private static final String TAG_PRIORITY = "Priority";
     private static final String TAG_REDSTONE_MODE = "RedstoneMode";
+    private static final String TAG_CHANNEL = "Channel";
 
     public CompoundTag save() {
         CompoundTag tag = new CompoundTag();
@@ -96,6 +118,9 @@ public class ConnectionConfig implements IConnectionConfig {
         tag.putString(TAG_TRANSFER_MODE, transferMode.name());
         tag.putInt(TAG_PRIORITY, priority);
         tag.putString(TAG_REDSTONE_MODE, redstoneMode.name());
+        if (channel != 0) {
+            tag.putInt(TAG_CHANNEL, channel);
+        }
         return tag;
     }
 
@@ -104,7 +129,8 @@ public class ConnectionConfig implements IConnectionConfig {
         TransferMode transferMode = safeEnum(TransferMode.class, tag.getString(TAG_TRANSFER_MODE), TransferMode.DISABLED);
         int priority = tag.getInt(TAG_PRIORITY);
         RedstoneMode redstoneMode = safeEnum(RedstoneMode.class, tag.getString(TAG_REDSTONE_MODE), RedstoneMode.ALWAYS_ACTIVE);
-        return new ConnectionConfig(status, transferMode, priority, redstoneMode);
+        int channel = tag.contains(TAG_CHANNEL) ? tag.getInt(TAG_CHANNEL) : 0;
+        return new ConnectionConfig(status, transferMode, priority, redstoneMode, channel);
     }
 
     /**
