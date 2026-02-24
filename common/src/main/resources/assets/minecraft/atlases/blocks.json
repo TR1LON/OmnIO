@@ -1,0 +1,12 @@
+{
+  "sources": [
+    {
+      "type": "single",
+      "resource": "omnio:block/conduit_flow"
+    },
+    {
+      "type": "single",
+      "resource": "omnio:block/conduit_shell"
+    }
+  ]
+}

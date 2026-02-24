@@ -80,7 +80,8 @@ public class ItemConduitTicker implements IConduitTicker {
 
                 if (!transferHelper.hasHandler(level, targetPos, accessFace)) continue;
 
-                TransferTarget target = new TransferTarget(targetPos, accessFace, config.getPriority());
+                int channel = config.getChannel();
+                TransferTarget target = new TransferTarget(targetPos, accessFace, config.getPriority(), channel);
                 IConnectionConfig.TransferMode mode = config.getTransferMode();
                 if (mode == IConnectionConfig.TransferMode.EXTRACT || mode == IConnectionConfig.TransferMode.BOTH) {
                     extractTargets.add(target);
@@ -128,6 +129,8 @@ public class ItemConduitTicker implements IConduitTicker {
 
             for (TransferTarget insertTarget : insertTargets) {
                 if (remainingToExtract <= 0) break;
+                // Only transfer between endpoints on the same channel
+                if (insertTarget.channel != source.channel) continue;
                 // Don't insert into the same block we're extracting from
                 if (insertTarget.targetPos.equals(source.targetPos)) continue;
 
@@ -184,6 +187,6 @@ public class ItemConduitTicker implements IConduitTicker {
         return true;
     }
 
-    private record TransferTarget(BlockPos targetPos, Direction accessFace, int priority) {
+    private record TransferTarget(BlockPos targetPos, Direction accessFace, int priority, int channel) {
     }
 }

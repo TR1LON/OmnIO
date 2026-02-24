@@ -9,6 +9,7 @@ import net.minecraft.world.phys.shapes.VoxelShape;
 
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.EnumMap;
 import java.util.List;
 import java.util.Map;
 
@@ -161,27 +162,89 @@ public final class ConduitShape {
                                                  Map<ConduitSlot, ConnectionContainer> connections) {
         if (slots.isEmpty()) return CORE_SHAPES[0]; // fallback
 
-        VoxelShape combined = Shapes.empty();
-        // Track which directions have a block connection (for pad shapes)
+        List<ConduitSlot> slotList = new ArrayList<>(slots);
+        float half = CORE_SIZE / 2.0f; // 1.5 pixels
+
+        // Pre-compute per-direction connected conduit lists (same logic as renderer)
+        @SuppressWarnings("unchecked")
+        List<ConduitSlot>[] connectedPerDir = new List[6];
+        boolean[] hasConnection = new boolean[6];
         boolean[] hasBlockConnection = new boolean[6];
 
-        int slotIndex = 0;
-        for (ConduitSlot slot : slots) {
-            if (slotIndex >= 9) break;
-            combined = Shapes.or(combined, CORE_SHAPES[slotIndex]);
-
-            ConnectionContainer container = connections.get(slot);
-            if (container != null) {
-                for (Direction dir : Direction.values()) {
-                    if (container.isConnected(dir)) {
-                        combined = Shapes.or(combined, CONNECTOR_SHAPES[slotIndex][dir.get3DDataValue()]);
-                        if (container.getStatus(dir) == ConnectionStatus.CONNECTED_BLOCK) {
-                            hasBlockConnection[dir.get3DDataValue()] = true;
-                        }
+        for (int d = 0; d < 6; d++) {
+            connectedPerDir[d] = new ArrayList<>();
+            Direction dir = Direction.from3DDataValue(d);
+            for (ConduitSlot slot : slotList) {
+                ConnectionContainer c = connections.get(slot);
+                if (c != null && c.isConnected(dir)) {
+                    connectedPerDir[d].add(slot);
+                    if (c.getStatus(dir) == ConnectionStatus.CONNECTED_BLOCK) {
+                        hasBlockConnection[d] = true;
                     }
                 }
             }
-            slotIndex++;
+            hasConnection[d] = !connectedPerDir[d].isEmpty();
+        }
+
+        Direction.Axis mainAxis = ConduitOffsetHelper.findMainAxis(hasConnection);
+        VoxelShape combined = Shapes.empty();
+
+        int globalIdx = 0;
+        for (ConduitSlot slot : slotList) {
+            if (globalIdx >= 9) break;
+
+            // Collect per-direction 3D offsets (same algorithm as ConduitBundleRenderer)
+            EnumMap<Direction, float[]> dirOffsets = new EnumMap<>(Direction.class);
+            for (int d = 0; d < 6; d++) {
+                Direction dir = Direction.from3DDataValue(d);
+                List<ConduitSlot> connected = connectedPerDir[d];
+                int myIdx = connected.indexOf(slot);
+                if (myIdx >= 0) {
+                    int[] off2D = ConduitOffsetHelper.offsetConduit(myIdx, connected.size());
+                    dirOffsets.put(dir, ConduitOffsetHelper.translationFor(dir.getAxis(), off2D));
+                }
+            }
+
+            // Compute core bounds — mirrors the renderer's bounding-box logic
+            float coreMinX, coreMinY, coreMinZ, coreMaxX, coreMaxY, coreMaxZ;
+
+            if (dirOffsets.isEmpty()) {
+                // Unconnected conduit: use default grid position
+                float[] def = ConduitOffsetHelper.defaultCoreOffset(globalIdx, slotList.size(), mainAxis);
+                float cx = 8 + def[0] * 16;
+                float cy = 8 + def[1] * 16;
+                float cz = 8 + def[2] * 16;
+                coreMinX = cx - half; coreMinY = cy - half; coreMinZ = cz - half;
+                coreMaxX = cx + half; coreMaxY = cy + half; coreMaxZ = cz + half;
+            } else {
+                // Bounding box of all per-direction offsets (in block units)
+                float minOx = Float.MAX_VALUE, minOy = Float.MAX_VALUE, minOz = Float.MAX_VALUE;
+                float maxOx = -Float.MAX_VALUE, maxOy = -Float.MAX_VALUE, maxOz = -Float.MAX_VALUE;
+                for (float[] o : dirOffsets.values()) {
+                    minOx = Math.min(minOx, o[0]); minOy = Math.min(minOy, o[1]); minOz = Math.min(minOz, o[2]);
+                    maxOx = Math.max(maxOx, o[0]); maxOy = Math.max(maxOy, o[1]); maxOz = Math.max(maxOz, o[2]);
+                }
+                // Convert from block units to pixel space (center at 8)
+                coreMinX = 8 + minOx * 16 - half; coreMinY = 8 + minOy * 16 - half; coreMinZ = 8 + minOz * 16 - half;
+                coreMaxX = 8 + maxOx * 16 + half; coreMaxY = 8 + maxOy * 16 + half; coreMaxZ = 8 + maxOz * 16 + half;
+            }
+
+            // Add core shape
+            combined = Shapes.or(combined, Block.box(coreMinX, coreMinY, coreMinZ,
+                    coreMaxX, coreMaxY, coreMaxZ));
+
+            // Add arm shapes for each connected direction at its offset position
+            for (var entry : dirOffsets.entrySet()) {
+                Direction dir = entry.getKey();
+                float[] off = entry.getValue();
+                // Arm center in pixel space
+                float armCx = 8 + off[0] * 16;
+                float armCy = 8 + off[1] * 16;
+                float armCz = 8 + off[2] * 16;
+                combined = Shapes.or(combined, buildConnector(armCx, armCy, armCz, half, dir));
+            }
+
+            globalIdx++;
         }
 
         // Add pad shapes on block-connected faces

@@ -51,7 +51,7 @@ public class ConduitScreen extends AbstractContainerScreen<ConduitMenu> {
 
     // Layout
     private static final int GUI_W = 180;
-    private static final int GUI_H = 170;
+    private static final int GUI_H = 190;
     private static final int PAD   = 8;
     private static final int TAB_SIZE = 20;
     private static final int TAB_GAP  = 3;

@@ -3,6 +3,7 @@ package com.trilon.omnio.content.conduit.type.fluid;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -56,8 +57,10 @@ public class FluidConduitTicker implements IConduitTicker {
 
         int transferRate = tier.getTransferRate();
 
-        // Phase 1: Extract from block endpoints into the network buffer
-        extractLoop:
+        // Collect extract and insert endpoints grouped by channel
+        Map<Integer, List<ExtractTarget>> extractByChannel = new HashMap<>();
+        Map<Integer, List<InsertTarget>> insertByChannel = new HashMap<>();
+
         for (IConduitNode node : endpoints) {
             if (!isNodeTicking(node)) continue;
 
@@ -66,78 +69,63 @@ public class FluidConduitTicker implements IConduitTicker {
                 IConnectionConfig config = entry.getValue();
 
                 if (config.getStatus() != ConnectionStatus.CONNECTED_BLOCK) continue;
-                if (!canExtract(config)) continue;
                 if (!isRedstoneActive(level, node.getPos(), config)) continue;
 
                 BlockPos targetPos = node.getPos().relative(dir);
                 Direction accessFace = dir.getOpposite();
-
                 if (!transferHelper.hasHandler(level, targetPos, accessFace)) continue;
 
-                int space = ctx.getCapacity() - ctx.getStoredAmount();
-                if (space <= 0) break extractLoop; // Buffer full
-
-                int maxExtract = Math.min(transferRate, space);
-
-                // Filter by locked/stored fluid to maintain single-fluid invariant
-                Fluid filter = ctx.getAcceptedFluid();
-
-                FluidResource extracted = transferHelper.extract(level, targetPos, accessFace,
-                        filter, maxExtract, false);
-
-                if (!extracted.isEmpty()) {
-                    ctx.addFluid(extracted.fluid(), extracted.amount());
+                int channel = config.getChannel();
+                if (canExtract(config)) {
+                    extractByChannel.computeIfAbsent(channel, k -> new ArrayList<>())
+                            .add(new ExtractTarget(targetPos, accessFace));
+                }
+                if (canInsert(config)) {
+                    insertByChannel.computeIfAbsent(channel, k -> new ArrayList<>())
+                            .add(new InsertTarget(targetPos, accessFace, config.getPriority()));
                 }
             }
         }
 
-        // Phase 2: Insert from network buffer into block endpoints, priority-sorted
-        if (ctx.getStoredAmount() <= 0) return;
+        // Process each channel independently through the shared buffer
+        for (Map.Entry<Integer, List<ExtractTarget>> chEntry : extractByChannel.entrySet()) {
+            int channel = chEntry.getKey();
+            List<ExtractTarget> extractors = chEntry.getValue();
+            List<InsertTarget> inserters = insertByChannel.getOrDefault(channel, List.of());
+            if (inserters.isEmpty()) continue;
 
-        List<InsertTarget> insertTargets = collectInsertTargets(level, endpoints);
-        if (insertTargets.isEmpty()) return;
+            inserters.sort(Comparator.comparingInt(InsertTarget::priority).reversed());
 
-        insertTargets.sort(Comparator.comparingInt(InsertTarget::priority).reversed());
+            // Filter by locked/stored fluid to maintain single-fluid invariant
+            Fluid filter = ctx.getAcceptedFluid();
 
-        Fluid fluidToInsert = ctx.getStoredFluid();
+            // Phase 1: Extract into buffer
+            for (ExtractTarget src : extractors) {
+                int space = ctx.getCapacity() - ctx.getStoredAmount();
+                if (space <= 0) break;
 
-        for (InsertTarget target : insertTargets) {
-            if (ctx.getStoredAmount() <= 0) break;
+                int maxExtract = Math.min(transferRate, space);
+                FluidResource extracted = transferHelper.extract(level, src.targetPos, src.accessFace,
+                        filter, maxExtract, false);
+                if (!extracted.isEmpty()) {
+                    ctx.addFluid(extracted.fluid(), extracted.amount());
+                }
+            }
 
-            int maxInsert = Math.min(transferRate, ctx.getStoredAmount());
-            int accepted = transferHelper.insert(level, target.targetPos, target.accessFace,
-                    fluidToInsert, maxInsert, false);
-            if (accepted > 0) {
-                ctx.removeFluid(accepted);
+            // Phase 2: Insert from buffer
+            if (ctx.getStoredAmount() <= 0) continue;
+            Fluid fluidToInsert = ctx.getStoredFluid();
+
+            for (InsertTarget target : inserters) {
+                if (ctx.getStoredAmount() <= 0) break;
+                int maxInsert = Math.min(transferRate, ctx.getStoredAmount());
+                int accepted = transferHelper.insert(level, target.targetPos, target.accessFace,
+                        fluidToInsert, maxInsert, false);
+                if (accepted > 0) {
+                    ctx.removeFluid(accepted);
+                }
             }
         }
-    }
-
-    private List<InsertTarget> collectInsertTargets(ServerLevel level,
-                                                     Collection<? extends IConduitNode> endpoints) {
-        List<InsertTarget> targets = new ArrayList<>();
-
-        for (IConduitNode node : endpoints) {
-            if (!isNodeTicking(node)) continue;
-
-            for (Map.Entry<Direction, IConnectionConfig> entry : node.getConnections().entrySet()) {
-                Direction dir = entry.getKey();
-                IConnectionConfig config = entry.getValue();
-
-                if (config.getStatus() != ConnectionStatus.CONNECTED_BLOCK) continue;
-                if (!canInsert(config)) continue;
-                if (!isRedstoneActive(level, node.getPos(), config)) continue;
-
-                BlockPos targetPos = node.getPos().relative(dir);
-                Direction accessFace = dir.getOpposite();
-
-                if (!transferHelper.hasHandler(level, targetPos, accessFace)) continue;
-
-                targets.add(new InsertTarget(targetPos, accessFace, config.getPriority()));
-            }
-        }
-
-        return targets;
     }
 
     // ---- Helper methods ----
@@ -169,5 +157,8 @@ public class FluidConduitTicker implements IConduitTicker {
     }
 
     private record InsertTarget(BlockPos targetPos, Direction accessFace, int priority) {
+    }
+
+    private record ExtractTarget(BlockPos targetPos, Direction accessFace) {
     }
 }

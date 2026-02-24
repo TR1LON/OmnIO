@@ -1,5 +1,6 @@
 package com.trilon.omnio.neoforge.platform;
 
+import com.trilon.omnio.content.conduit.ConduitMenu;
 import com.trilon.omnio.content.conduit.OmniConduitBlockEntity;
 import com.trilon.omnio.platform.IPlatformHelper;
 import net.minecraft.core.Direction;

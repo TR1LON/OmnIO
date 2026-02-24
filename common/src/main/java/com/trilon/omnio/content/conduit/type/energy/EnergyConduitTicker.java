@@ -48,8 +48,10 @@ public class EnergyConduitTicker implements IConduitTicker {
 
         long transferRate = tier.getTransferRate();
 
-        // Phase 1: Extract from block endpoints into the network buffer
-        extractLoop:
+        // Collect all extract and insert endpoints grouped by channel
+        Map<Integer, List<ExtractTarget>> extractByChannel = new HashMap<>();
+        Map<Integer, List<InsertTarget>> insertByChannel = new HashMap<>();
+
         for (IConduitNode node : endpoints) {
             if (!isNodeTicking(node)) continue;
 
@@ -58,79 +60,59 @@ public class EnergyConduitTicker implements IConduitTicker {
                 IConnectionConfig config = entry.getValue();
 
                 if (config.getStatus() != ConnectionStatus.CONNECTED_BLOCK) continue;
-                if (!canExtract(config)) continue;
                 if (!isRedstoneActive(level, node.getPos(), config)) continue;
 
-                // Extract from the adjacent block
                 BlockPos targetPos = node.getPos().relative(dir);
                 Direction accessFace = dir.getOpposite();
-
                 if (!transferHelper.hasHandler(level, targetPos, accessFace)) continue;
 
+                int channel = config.getChannel();
+                if (canExtract(config)) {
+                    extractByChannel.computeIfAbsent(channel, k -> new ArrayList<>())
+                            .add(new ExtractTarget(node.getPos(), targetPos, accessFace));
+                }
+                if (canInsert(config)) {
+                    insertByChannel.computeIfAbsent(channel, k -> new ArrayList<>())
+                            .add(new InsertTarget(targetPos, accessFace, config.getPriority()));
+                }
+            }
+        }
+
+        // Process each channel independently through the shared buffer
+        for (Map.Entry<Integer, List<ExtractTarget>> chEntry : extractByChannel.entrySet()) {
+            int channel = chEntry.getKey();
+            List<ExtractTarget> extractors = chEntry.getValue();
+            List<InsertTarget> inserters = insertByChannel.getOrDefault(channel, List.of());
+            if (inserters.isEmpty()) continue;
+
+            // Sort inserters by priority (highest first)
+            inserters.sort(Comparator.comparingInt(InsertTarget::priority).reversed());
+
+            // Phase 1: Extract into buffer
+            long extracted = 0;
+            for (ExtractTarget src : extractors) {
                 long space = ctx.getCapacity() - ctx.getStoredEnergy();
-                if (space <= 0) break extractLoop; // Buffer full — exit both loops
-
+                if (space <= 0) break;
                 long maxExtract = Math.min(transferRate, space);
-                long extracted = transferHelper.extract(level, targetPos, accessFace, maxExtract, false);
-                if (extracted > 0) {
-                    ctx.addEnergy(extracted);
+                long got = transferHelper.extract(level, src.targetPos, src.accessFace, maxExtract, false);
+                if (got > 0) {
+                    ctx.addEnergy(got);
+                    extracted += got;
+                }
+            }
+
+            // Phase 2: Insert from buffer
+            if (extracted <= 0 && ctx.getStoredEnergy() <= 0) continue;
+            for (InsertTarget target : inserters) {
+                if (ctx.getStoredEnergy() <= 0) break;
+                long maxInsert = Math.min(transferRate, ctx.getStoredEnergy());
+                Long remainder = transferHelper.insert(level, target.targetPos, target.accessFace, maxInsert, false);
+                long inserted = maxInsert - remainder;
+                if (inserted > 0) {
+                    ctx.removeEnergy(inserted);
                 }
             }
         }
-
-        // Phase 2: Insert from network buffer into block endpoints, priority-sorted
-        if (ctx.getStoredEnergy() <= 0) return;
-
-        List<InsertTarget> insertTargets = collectInsertTargets(level, endpoints);
-        if (insertTargets.isEmpty()) return;
-
-        // Sort by priority descending (higher priority receives energy first)
-        insertTargets.sort(Comparator.comparingInt(InsertTarget::priority).reversed());
-
-        for (InsertTarget target : insertTargets) {
-            if (ctx.getStoredEnergy() <= 0) break;
-
-            long maxInsert = Math.min(transferRate, ctx.getStoredEnergy());
-            Long remainder = transferHelper.insert(level, target.targetPos, target.accessFace, maxInsert, false);
-            long inserted = maxInsert - remainder;
-            if (inserted > 0) {
-                ctx.removeEnergy(inserted);
-            }
-        }
-    }
-
-    /**
-     * Collect all valid insertion targets from the network's block endpoints.
-     */
-    private List<InsertTarget> collectInsertTargets(ServerLevel level,
-                                                     Collection<? extends IConduitNode> endpoints) {
-        List<InsertTarget> targets = new ArrayList<>();
-
-        for (IConduitNode node : endpoints) {
-            if (!isNodeTicking(node)) continue;
-
-            for (Map.Entry<Direction, IConnectionConfig> entry : node.getConnections().entrySet()) {
-                Direction dir = entry.getKey();
-                IConnectionConfig config = entry.getValue();
-
-                if (config.getStatus() != ConnectionStatus.CONNECTED_BLOCK) continue;
-                if (!canInsert(config)) continue;
-                if (!isRedstoneActive(level, node.getPos(), config)) continue;
-
-                BlockPos targetPos = node.getPos().relative(dir);
-                Direction accessFace = dir.getOpposite();
-
-                if (!transferHelper.hasHandler(level, targetPos, accessFace)) continue;
-
-                // Verify the target can actually accept energy (simulate)
-                Long simRemainder = transferHelper.insert(level, targetPos, accessFace, 1L, true);
-                if (simRemainder < 1L) {
-                    targets.add(new InsertTarget(targetPos, accessFace, config.getPriority()));
-                }
-            }
-        }
-
-        return targets;
     }
 
     // ---- Helper methods ----
@@ -171,5 +153,8 @@ public class EnergyConduitTicker implements IConduitTicker {
      * Internal record for tracking insertion targets with their priority.
      */
     private record InsertTarget(BlockPos targetPos, Direction accessFace, int priority) {
+    }
+
+    private record ExtractTarget(BlockPos conduitPos, BlockPos targetPos, Direction accessFace) {
     }
 }
