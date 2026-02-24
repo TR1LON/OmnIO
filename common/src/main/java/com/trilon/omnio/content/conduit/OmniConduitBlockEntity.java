@@ -2,6 +2,7 @@ package com.trilon.omnio.content.conduit;
 
 import com.trilon.omnio.Constants;
 import com.trilon.omnio.api.conduit.ConnectionStatus;
+import com.trilon.omnio.content.conduit.network.ConduitNetworkManager;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.core.HolderLookup;
@@ -12,6 +13,7 @@ import net.minecraft.network.protocol.Packet;
 import net.minecraft.network.protocol.game.ClientGamePacketListener;
 import net.minecraft.network.protocol.game.ClientboundBlockEntityDataPacket;
 import net.minecraft.resources.ResourceLocation;
+import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.entity.BlockEntityType;
@@ -73,6 +75,18 @@ public class OmniConduitBlockEntity extends BlockEntity {
         return TYPE;
     }
 
+    /**
+     * Called when the block entity is loaded into the world (chunk load, world load).
+     * Registers all conduit nodes with the network manager to rebuild the graph.
+     */
+    @Override
+    public void onLoad() {
+        super.onLoad();
+        if (level instanceof ServerLevel serverLevel && !conduitIds.isEmpty()) {
+            ConduitNetworkManager.get(serverLevel).onBlockEntityLoaded(this);
+        }
+    }
+
     // ---- Conduit Management ----
 
     /**
@@ -124,11 +138,16 @@ public class OmniConduitBlockEntity extends BlockEntity {
         }
 
         conduitIds.add(conduitId);
-        connections.put(conduitId, new ConnectionContainer());
+        ConnectionContainer container = new ConnectionContainer();
+        connections.put(conduitId, container);
 
         // Evaluate connections to neighbors for the new conduit
         if (level != null && !level.isClientSide()) {
             evaluateConnections(conduitId);
+            // Notify the network manager to create/merge networks
+            if (level instanceof ServerLevel serverLevel) {
+                ConduitNetworkManager.get(serverLevel).onConduitAdded(getBlockPos(), conduitId, container);
+            }
         }
 
         invalidateShape();
@@ -176,7 +195,10 @@ public class OmniConduitBlockEntity extends BlockEntity {
         }
         connections.remove(conduitId);
 
-        // TODO: Notify the conduit's network that this node was removed
+        // Notify the network manager to handle potential splits
+        if (level instanceof ServerLevel serverLevel) {
+            ConduitNetworkManager.get(serverLevel).onConduitRemoved(getBlockPos(), conduitId);
+        }
 
         invalidateShape();
         setChanged();
@@ -259,6 +281,10 @@ public class OmniConduitBlockEntity extends BlockEntity {
             ConnectionContainer container = connections.get(conduitId);
             if (container != null) {
                 evaluateConnection(conduitId, container, direction);
+                // Notify network manager of connection changes
+                if (level instanceof ServerLevel serverLevel) {
+                    ConduitNetworkManager.get(serverLevel).onConnectionsChanged(getBlockPos(), conduitId, container);
+                }
             }
         }
         invalidateShape();
@@ -290,7 +316,13 @@ public class OmniConduitBlockEntity extends BlockEntity {
             }
         }
 
-        // TODO: Notify networks that all conduit nodes at this position are removed
+        // Notify network manager that all conduit nodes at this position are removed
+        if (level instanceof ServerLevel serverLevel) {
+            ConduitNetworkManager manager = ConduitNetworkManager.get(serverLevel);
+            for (ResourceLocation conduitId : conduitIds) {
+                manager.onConduitRemoved(getBlockPos(), conduitId);
+            }
+        }
     }
 
     // ---- Shape ----
