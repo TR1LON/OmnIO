@@ -10,8 +10,10 @@ import net.neoforged.bus.api.IEventBus;
 import net.neoforged.fml.common.Mod;
 import net.neoforged.fml.event.lifecycle.FMLCommonSetupEvent;
 import net.neoforged.neoforge.common.NeoForge;
+import net.minecraft.server.level.ServerLevel;
 import net.neoforged.neoforge.event.server.ServerStoppedEvent;
 import net.neoforged.neoforge.event.tick.ServerTickEvent;
+import net.neoforged.neoforge.event.level.ChunkEvent;
 
 /**
  * NeoForge entry point for OmnIO.
@@ -26,9 +28,11 @@ public class OmnIONeoForge {
         // Populate common static references after registries freeze
         modEventBus.addListener(this::onCommonSetup);
 
-        // Game event listeners (tick, server stop)
+        // Game event listeners (tick, server stop, chunk load/unload)
         NeoForge.EVENT_BUS.addListener(this::onServerTick);
         NeoForge.EVENT_BUS.addListener(this::onServerStopped);
+        NeoForge.EVENT_BUS.addListener(this::onChunkLoad);
+        NeoForge.EVENT_BUS.addListener(this::onChunkUnload);
 
         OmnIOCommon.init();
         Constants.LOG.info("{} initialized on NeoForge", Constants.MOD_NAME);
@@ -56,5 +60,19 @@ public class OmnIONeoForge {
         // Clearing them would leave the registry empty if a new world is started
         // without restarting the game.
         ConduitNetworkManager.clearAll();
+    }
+
+    private void onChunkLoad(ChunkEvent.Load event) {
+        if (event.getLevel() instanceof ServerLevel serverLevel) {
+            var chunkPos = event.getChunk().getPos();
+            ConduitNetworkManager.get(serverLevel).onChunkLoaded(chunkPos.x, chunkPos.z);
+        }
+    }
+
+    private void onChunkUnload(ChunkEvent.Unload event) {
+        if (event.getLevel() instanceof ServerLevel serverLevel) {
+            var chunkPos = event.getChunk().getPos();
+            ConduitNetworkManager.get(serverLevel).onChunkUnloaded(chunkPos.x, chunkPos.z);
+        }
     }
 }

@@ -50,6 +50,7 @@ public class EnergyConduitTicker implements IConduitTicker {
         long transferRate = tier.getTransferRate();
 
         // Phase 1: Extract from block endpoints into the network buffer
+        extractLoop:
         for (IConduitNode node : endpoints) {
             if (!isNodeTicking(node)) continue;
 
@@ -68,7 +69,7 @@ public class EnergyConduitTicker implements IConduitTicker {
                 if (!transferHelper.hasHandler(level, targetPos, accessFace)) continue;
 
                 long space = ctx.getCapacity() - ctx.getStoredEnergy();
-                if (space <= 0) break; // Buffer full
+                if (space <= 0) break extractLoop; // Buffer full — exit both loops
 
                 long maxExtract = Math.min(transferRate, space);
                 long extracted = transferHelper.extract(level, targetPos, accessFace, maxExtract, false);

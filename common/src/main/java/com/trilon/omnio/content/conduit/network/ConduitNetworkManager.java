@@ -116,6 +116,11 @@ public class ConduitNetworkManager {
             existing.syncFromContainer(container);
 
             // Re-wire neighbor edges for any already-loaded neighbors
+            // and collect their networks for potential merge
+            Set<ConduitNetwork> neighborNetworks = new LinkedHashSet<>();
+            if (existing.getNetwork() != null) {
+                neighborNetworks.add(existing.getNetwork());
+            }
             Set<Direction> conduitDirs = existing.getConduitConnectedDirections();
             for (Direction dir : Direction.values()) {
                 BlockPos neighborPos = pos.relative(dir);
@@ -123,10 +128,27 @@ public class ConduitNetworkManager {
                 if (neighborNode != null && conduitDirs.contains(dir)) {
                     existing.setNeighbor(dir, neighborNode);
                     neighborNode.setNeighbor(dir.getOpposite(), existing);
+                    if (neighborNode.getNetwork() != null) {
+                        neighborNetworks.add(neighborNode.getNetwork());
+                    }
                 }
             }
 
-            if (existing.getNetwork() != null) {
+            // Merge if neighbors are in different networks (can happen during chunk reload order)
+            if (neighborNetworks.size() > 1) {
+                Iterator<ConduitNetwork> it = neighborNetworks.iterator();
+                ConduitNetwork primary = it.next();
+                while (it.hasNext()) {
+                    ConduitNetwork other = it.next();
+                    if (other != primary) {
+                        Constants.LOG.debug("Merging network {} into {} for {} (chunk reload)",
+                                other.getId(), primary.getId(), conduitId);
+                        primary.mergeFrom(other);
+                        removeNetwork(conduitId, other);
+                    }
+                }
+                recalculateEnergyCapacity(primary);
+            } else if (existing.getNetwork() != null) {
                 existing.getNetwork().invalidateCaches();
             }
             return;
@@ -273,6 +295,12 @@ public class ConduitNetworkManager {
             removedMap.put(n.getPos(), n);
         }
 
+        // Track how many orphan nodes have not yet been assigned to a split network.
+        // This is used to compute the correct running fraction for context splitting:
+        // each split() operates on the already-reduced context, so the fraction must
+        // be relative to the nodes the context currently represents (network + unassigned).
+        int unassignedOrphans = toRemoveFromOriginal.size();
+
         // Now BFS from each unassigned former neighbor to create new split networks
         for (int i = 1; i < formerNeighbors.size(); i++) {
             ConduitNodeImpl neighbor = formerNeighbors.get(i);
@@ -282,7 +310,14 @@ public class ConduitNetworkManager {
             ConduitNetwork splitNetwork = createNetwork(conduitId);
             Set<BlockPos> splitReachable = bfsAmong(neighbor, removedPositions);
 
-            double fraction = (double) splitReachable.size() / (reachable.size() + toRemoveFromOriginal.size());
+            // Compute fraction relative to nodes the context currently represents:
+            // the original network's remaining nodes + unassigned orphans.
+            // This ensures each successive split() call gets the correct proportion
+            // even though split() operates on the progressively-reduced context.
+            int contextNodeCount = network.size() + unassignedOrphans;
+            double fraction = contextNodeCount > 0
+                    ? (double) splitReachable.size() / contextNodeCount
+                    : 0.0;
 
             // Iterate fragment positions directly — O(fragment) not O(toRemoveFromOriginal)
             for (BlockPos fragmentPos : splitReachable) {
@@ -292,6 +327,8 @@ public class ConduitNetworkManager {
                     assigned.add(fragmentPos);
                 }
             }
+
+            unassignedOrphans -= splitReachable.size();
 
             // Split the context proportionally — match specific subtype to ensure correct split()
             if (network.getContext() instanceof EnergyConduitNetworkContext energyCtx) {
@@ -433,11 +470,16 @@ public class ConduitNetworkManager {
 
                 // BFS among unreachable to form new networks (may be >1 fragment)
                 Set<BlockPos> assigned = new LinkedHashSet<>();
+                int unassignedOrphans2 = unreachable.size();
                 for (ConduitNodeImpl orphan : unreachable) {
                     if (assigned.contains(orphan.getPos())) continue;
                     ConduitNetwork splitNetwork = createNetwork(conduitId);
                     Set<BlockPos> fragment = bfsAmong(orphan, unreachablePositions);
-                    double fraction = (double) fragment.size() / (reachable.size() + unreachable.size());
+                    // Compute fraction relative to the nodes the context currently represents
+                    int contextNodeCount = network.size() + unassignedOrphans2;
+                    double fraction = contextNodeCount > 0
+                            ? (double) fragment.size() / contextNodeCount
+                            : 0.0;
                     // Iterate fragment positions directly — O(fragment) not O(unreachable)
                     for (BlockPos fragmentPos : fragment) {
                         ConduitNodeImpl n = unreachableMap.get(fragmentPos);
@@ -446,6 +488,7 @@ public class ConduitNetworkManager {
                             assigned.add(fragmentPos);
                         }
                     }
+                    unassignedOrphans2 -= fragment.size();
                     // Match specific subtype to ensure correct split()
                     if (network.getContext() instanceof EnergyConduitNetworkContext energyCtx) {
                         splitNetwork.setContext(energyCtx.split(fraction));
@@ -475,17 +518,18 @@ public class ConduitNetworkManager {
      * Called from the platform-specific server tick event.
      */
     public void tickAllNetworks() {
-        // Snapshot the entry set to avoid ConcurrentModificationException
-        // if a ticker triggers block entity loads that modify networksByConduit
+        // Snapshot both the outer entry set AND each inner network set to avoid
+        // ConcurrentModificationException if a ticker triggers block entity loads
+        // that modify networksByConduit or its inner sets.
         var snapshot = List.copyOf(networksByConduit.entrySet());
         for (Map.Entry<ResourceLocation, Set<ConduitNetwork>> entry : snapshot) {
             ResourceLocation conduitId = entry.getKey();
-            Set<ConduitNetwork> networks = entry.getValue();
+            Set<ConduitNetwork> liveSet = entry.getValue();
 
-            if (networks.isEmpty()) continue;
+            if (liveSet.isEmpty()) continue;
 
             // Get any network to access the conduit type (all share the same type)
-            ConduitNetwork anyNetwork = networks.iterator().next();
+            ConduitNetwork anyNetwork = liveSet.iterator().next();
             IConduitType<?> type = anyNetwork.getType();
             int tickRate = type.getTickRate();
 
@@ -493,7 +537,9 @@ public class ConduitNetworkManager {
             int counter = tickCounters.getOrDefault(conduitId, 0) + 1;
             if (counter >= tickRate) {
                 counter = 0;
-                for (ConduitNetwork network : networks) {
+                // Snapshot the inner set: tickers may trigger BE loads that modify it
+                List<ConduitNetwork> networksCopy = List.copyOf(liveSet);
+                for (ConduitNetwork network : networksCopy) {
                     if (!network.isEmpty()) {
                         type.getTicker().tick(level, network);
                     }

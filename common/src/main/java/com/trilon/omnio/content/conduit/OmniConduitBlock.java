@@ -8,6 +8,7 @@ import net.minecraft.world.level.Level;
 import net.minecraft.world.level.LevelAccessor;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.EntityBlock;
+import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.block.RenderShape;
 import net.minecraft.world.level.block.SimpleWaterloggedBlock;
 import net.minecraft.world.level.block.entity.BlockEntity;
@@ -129,7 +130,8 @@ public class OmniConduitBlock extends Block implements EntityBlock, SimpleWaterl
         }
 
         // Notify the block entity to re-evaluate connections when a neighbor changes
-        if (!level.isClientSide()) {
+        // LevelAccessor does not have isClientSide(); use instanceof ServerLevel instead
+        if (level instanceof ServerLevel) {
             BlockEntity be = level.getBlockEntity(pos);
             if (be instanceof OmniConduitBlockEntity conduitBE) {
                 conduitBE.onNeighborChanged(direction, neighborState, neighborPos);

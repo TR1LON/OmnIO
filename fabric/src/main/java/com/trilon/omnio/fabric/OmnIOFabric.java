@@ -9,6 +9,8 @@ import com.trilon.omnio.registry.ConduitTypes;
 import net.fabricmc.api.ModInitializer;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
+import net.fabricmc.fabric.api.event.lifecycle.v1.ServerChunkEvents;
+import net.minecraft.server.level.ServerLevel;
 
 /**
  * Fabric entry point for OmnIO.
@@ -35,6 +37,16 @@ public class OmnIOFabric implements ModInitializer {
         // during onInitialize which only fires once per game session.
         ServerLifecycleEvents.SERVER_STOPPED.register(server -> {
             ConduitNetworkManager.clearAll();
+        });
+
+        // Mark conduit nodes as ticking/non-ticking when chunks load/unload
+        ServerChunkEvents.CHUNK_LOAD.register((serverLevel, chunk) -> {
+            var chunkPos = chunk.getPos();
+            ConduitNetworkManager.get(serverLevel).onChunkLoaded(chunkPos.x, chunkPos.z);
+        });
+        ServerChunkEvents.CHUNK_UNLOAD.register((serverLevel, chunk) -> {
+            var chunkPos = chunk.getPos();
+            ConduitNetworkManager.get(serverLevel).onChunkUnloaded(chunkPos.x, chunkPos.z);
         });
 
         OmnIOCommon.init();

@@ -7,6 +7,8 @@ import net.minecraft.world.item.context.UseOnContext;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.block.state.properties.BlockStateProperties;
+import net.minecraft.world.level.material.Fluids;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.level.Level;
 
@@ -94,8 +96,10 @@ public class ConduitItem extends Item {
             }
         }
 
-        // Place a new conduit bundle block
-        BlockState newState = conduitBlock.defaultBlockState();
+        // Place a new conduit bundle block, respecting waterlogging
+        boolean waterlogged = level.getFluidState(pos).getType() == Fluids.WATER;
+        BlockState newState = conduitBlock.defaultBlockState()
+                .setValue(BlockStateProperties.WATERLOGGED, waterlogged);
         if (level.setBlock(pos, newState, Block.UPDATE_ALL)) {
             var be = level.getBlockEntity(pos);
             if (be instanceof OmniConduitBlockEntity conduitBE) {
