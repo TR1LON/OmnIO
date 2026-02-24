@@ -2,7 +2,9 @@ package com.trilon.omnio.content.conduit;
 
 import com.trilon.omnio.Constants;
 import com.trilon.omnio.api.conduit.ConnectionStatus;
+import com.trilon.omnio.api.conduit.IConduitType;
 import com.trilon.omnio.content.conduit.network.ConduitNetworkManager;
+import com.trilon.omnio.content.conduit.network.ConduitTypeRegistry;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.core.HolderLookup;
@@ -272,9 +274,16 @@ public class OmniConduitBlockEntity extends BlockEntity {
             }
         }
 
-        // TODO: Check if neighbor block has a compatible capability for this conduit type
-        // (IEnergyStorage for energy, IFluidHandler for fluid, IItemHandler for items)
-        // If so, set CONNECTED_BLOCK. For now, fall through to DISCONNECTED.
+        // Check if neighbor block has a compatible capability for this conduit type
+        IConduitType<?> conduitType = ConduitTypeRegistry.getOrStub(conduitId);
+        if (conduitType.canConnectToBlock(level, getBlockPos(), dir)) {
+            // Only upgrade DISCONNECTED to CONNECTED_BLOCK; don't overwrite DISABLED
+            ConnectionStatus currentStatus = container.getStatus(dir);
+            if (currentStatus == ConnectionStatus.DISCONNECTED) {
+                container.setConfig(dir, ConnectionConfig.blockConnection());
+            }
+            return;
+        }
 
         // No valid connection found — ensure any stale connection is cleared
         ConnectionStatus currentStatus = container.getStatus(dir);

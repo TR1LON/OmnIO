@@ -3,7 +3,10 @@ package com.trilon.omnio.neoforge;
 import com.trilon.omnio.Constants;
 import com.trilon.omnio.OmnIOCommon;
 import com.trilon.omnio.content.conduit.network.ConduitNetworkManager;
+import com.trilon.omnio.content.conduit.network.ConduitTypeRegistry;
 import com.trilon.omnio.neoforge.registry.NeoForgeRegistration;
+import com.trilon.omnio.neoforge.transfer.NeoForgeEnergyTransferHelper;
+import com.trilon.omnio.registry.ConduitTypes;
 import net.neoforged.bus.api.IEventBus;
 import net.neoforged.fml.common.Mod;
 import net.neoforged.fml.event.lifecycle.FMLCommonSetupEvent;
@@ -33,7 +36,11 @@ public class OmnIONeoForge {
     }
 
     private void onCommonSetup(FMLCommonSetupEvent event) {
-        event.enqueueWork(NeoForgeRegistration::populateCommonReferences);
+        event.enqueueWork(() -> {
+            NeoForgeRegistration.populateCommonReferences();
+            // Register conduit types with NeoForge energy transfer helper
+            ConduitTypes.register(NeoForgeEnergyTransferHelper.INSTANCE);
+        });
     }
 
     private void onServerTick(ServerTickEvent.Post event) {
@@ -44,7 +51,8 @@ public class OmnIONeoForge {
     }
 
     private void onServerStopped(ServerStoppedEvent event) {
-        // Clear all cached network managers to prevent memory leaks
+        // Clear all cached network managers and conduit type registry to prevent memory leaks
         ConduitNetworkManager.clearAll();
+        ConduitTypeRegistry.clear();
     }
 }

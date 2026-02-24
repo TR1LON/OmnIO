@@ -4,6 +4,8 @@ import com.trilon.omnio.Constants;
 import com.trilon.omnio.api.conduit.IConduitType;
 import com.trilon.omnio.content.conduit.ConnectionContainer;
 import com.trilon.omnio.content.conduit.OmniConduitBlockEntity;
+import com.trilon.omnio.content.conduit.type.energy.EnergyConduitNetworkContext;
+import com.trilon.omnio.content.conduit.type.energy.EnergyConduitType;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.resources.ResourceLocation;
@@ -135,6 +137,7 @@ public class ConduitNetworkManager {
             // No neighbors — create a new singleton network
             ConduitNetwork network = createNetwork(conduitId);
             network.addNode(node);
+            recalculateEnergyCapacity(network);
             Constants.LOG.debug("Created new network {} for {} at {}", network.getId(), conduitId, pos.toShortString());
         } else {
             // Merge all neighboring networks into one, then add the new node
@@ -149,6 +152,7 @@ public class ConduitNetworkManager {
                 }
             }
             primary.addNode(node);
+            recalculateEnergyCapacity(primary);
         }
     }
 
@@ -260,6 +264,9 @@ public class ConduitNetworkManager {
             Constants.LOG.debug("Split off network {} ({} nodes) from {} for {}",
                     splitNetwork.getId(), splitNetwork.size(), network.getId(), conduitId);
         }
+
+        // Recalculate capacity for the original and all split networks
+        recalculateEnergyCapacity(network);
     }
 
     /**
@@ -359,6 +366,7 @@ public class ConduitNetworkManager {
                     removeNetwork(conduitId, other);
                 }
             }
+            recalculateEnergyCapacity(primary);
         }
 
         // Handle splits: if edges were removed, check if network is still connected
@@ -395,12 +403,14 @@ public class ConduitNetworkManager {
                     }
                     Constants.LOG.debug("Split off network {} ({} nodes) from {} for {} (connection change)",
                             splitNetwork.getId(), splitNetwork.size(), network.getId(), conduitId);
+                    recalculateEnergyCapacity(splitNetwork);
                 }
             }
         }
 
         if (network != null) {
             network.invalidateCaches();
+            recalculateEnergyCapacity(network);
         }
     }
 
@@ -509,9 +519,14 @@ public class ConduitNetworkManager {
     // ========================================================================
 
     private ConduitNetwork createNetwork(ResourceLocation conduitId) {
-        // TODO: When conduit type registry is wired, look up the IConduitType from conduitId
-        // For now, create with a stub type
-        ConduitNetwork network = new ConduitNetwork(new StubConduitType(conduitId));
+        IConduitType<?> type = ConduitTypeRegistry.getOrStub(conduitId);
+        ConduitNetwork network = new ConduitNetwork(type);
+
+        // Initialize type-specific network context
+        if (type instanceof EnergyConduitType energyType) {
+            network.setContext(new EnergyConduitNetworkContext(energyType.getTier().getCapacity()));
+        }
+
         networksByConduit.computeIfAbsent(conduitId, k -> new LinkedHashSet<>()).add(network);
         return network;
     }
@@ -557,5 +572,19 @@ public class ConduitNetworkManager {
             count += nodesMap.size();
         }
         return count;
+    }
+
+    // ---- Energy network context helpers ----
+
+    /**
+     * Recalculate the energy buffer capacity for a network based on its current node count.
+     * Called after nodes are added/removed to keep the pool capacity in sync.
+     */
+    static void recalculateEnergyCapacity(ConduitNetwork network) {
+        if (network.getType() instanceof EnergyConduitType energyType
+                && network.getContext() instanceof EnergyConduitNetworkContext ctx) {
+            long newCapacity = energyType.calculateNetworkCapacity(network.size());
+            ctx.setCapacity(newCapacity);
+        }
     }
 }

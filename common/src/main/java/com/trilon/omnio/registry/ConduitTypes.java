@@ -1,11 +1,16 @@
 package com.trilon.omnio.registry;
 
 import com.trilon.omnio.Constants;
+import com.trilon.omnio.api.transfer.ITransferHelper;
+import com.trilon.omnio.content.conduit.network.ConduitTypeRegistry;
+import com.trilon.omnio.content.conduit.type.energy.EnergyConduitTier;
+import com.trilon.omnio.content.conduit.type.energy.EnergyConduitType;
+import com.trilon.omnio.content.conduit.type.energy.NoOpEnergyTransferHelper;
 import net.minecraft.resources.ResourceLocation;
 
 /**
- * Stub: Built-in conduit type registrations.
- * Will be populated when the conduit type registry and implementations are built.
+ * Built-in conduit type registrations.
+ * Registers all OmnIO conduit types into the {@link ConduitTypeRegistry}.
  */
 public final class ConduitTypes {
 
@@ -18,11 +23,37 @@ public final class ConduitTypes {
     }
 
     /**
-     * Called during mod init to register built-in conduit types.
-     * Implementation will be added in Phase 3 when the registry is fully wired.
+     * Register built-in conduit types using the given energy transfer helper.
+     * The helper is platform-specific (NeoForge IEnergyStorage, Fabric Energy API).
+     *
+     * @param energyHelper the platform-specific energy transfer implementation
+     */
+    public static void register(ITransferHelper<Long> energyHelper) {
+        Constants.LOG.debug("Registering built-in conduit types");
+
+        // Register energy conduit types (one per tier)
+        registerEnergyConduit(OmnIOItems.ENERGY_CONDUIT_BASIC, EnergyConduitTier.BASIC, energyHelper);
+        registerEnergyConduit(OmnIOItems.ENERGY_CONDUIT_ADVANCED, EnergyConduitTier.ADVANCED, energyHelper);
+        registerEnergyConduit(OmnIOItems.ENERGY_CONDUIT_ELITE, EnergyConduitTier.ELITE, energyHelper);
+        registerEnergyConduit(OmnIOItems.ENERGY_CONDUIT_ULTIMATE, EnergyConduitTier.ULTIMATE, energyHelper);
+
+        // TODO: Register fluid conduit types (Phase 6)
+        // TODO: Register item conduit types (Phase 7)
+        // TODO: Register redstone conduit types (Phase 8)
+
+        Constants.LOG.info("Registered {} conduit types", ConduitTypeRegistry.getAll().size());
+    }
+
+    /**
+     * Register with the no-op helper (used when no platform helper is available yet).
      */
     public static void register() {
-        Constants.LOG.debug("Registering built-in conduit types");
-        // TODO: Register ENERGY, FLUID, ITEM, REDSTONE conduit type instances
+        register(NoOpEnergyTransferHelper.INSTANCE);
+    }
+
+    private static void registerEnergyConduit(String itemId, EnergyConduitTier tier, ITransferHelper<Long> helper) {
+        ResourceLocation id = ResourceLocation.fromNamespaceAndPath(Constants.MOD_ID, itemId);
+        EnergyConduitType type = new EnergyConduitType(id, tier, helper);
+        ConduitTypeRegistry.register(id, type);
     }
 }
