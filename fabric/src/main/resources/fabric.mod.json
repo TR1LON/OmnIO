@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "id": "${mod_id}",
+  "version": "${mod_version}",
+  "name": "${mod_name}",
+  "description": "${mod_description}",
+  "authors": [
+    "${mod_author}"
+  ],
+  "contact": {
+    "homepage": "https://github.com/Trilon/OmnIO",
+    "sources": "https://github.com/Trilon/OmnIO",
+    "issues": "https://github.com/Trilon/OmnIO/issues"
+  },
+  "license": "MIT",
+  "icon": "assets/omnio/icon.png",
+  "environment": "*",
+  "entrypoints": {
+    "main": [
+      "com.trilon.omnio.fabric.OmnIOFabric"
+    ]
+  },
+  "mixins": [],
+  "depends": {
+    "fabricloader": ">=0.16.0",
+    "minecraft": "~1.21.1",
+    "java": ">=21",
+    "fabric-api": "*"
+  }
+}

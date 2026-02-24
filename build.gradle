@@ -1,0 +1,33 @@
+subprojects {
+    apply plugin: 'java'
+
+    java.toolchain.languageVersion = JavaLanguageVersion.of(project.property('java_version'))
+
+    repositories {
+        mavenCentral()
+        maven { url = 'https://maven.neoforged.net/releases/' }
+        maven { url = 'https://maven.fabricmc.net/' }
+        maven { url = 'https://maven.parchmentmc.org/' }
+    }
+
+    jar {
+        from(rootProject.file('LICENSE')) {
+            rename { "${it}_${mod_id}" }
+        }
+        manifest {
+            attributes([
+                'Specification-Title'   : mod_id,
+                'Specification-Vendor'  : mod_author,
+                'Specification-Version' : '1',
+                'Implementation-Title'  : mod_name,
+                'Implementation-Version': mod_version,
+                'Implementation-Vendor' : mod_author,
+            ])
+        }
+    }
+
+    tasks.withType(JavaCompile).configureEach {
+        options.encoding = 'UTF-8'
+        options.release.set(Integer.parseInt(project.property('java_version')))
+    }
+}

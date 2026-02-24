@@ -1,0 +1,277 @@
+================================================================================
+                    OmnIO — Tiered Universal Conduit System
+                         Multi-Loader Minecraft Mod
+                              Master Plan v1.0
+================================================================================
+
+OVERVIEW
+--------
+OmnIO is a multi-loader (NeoForge + Fabric) Minecraft mod providing a tiered,
+universal item/fluid/energy/redstone conduit system using a bundle-block
+architecture (multiple conduit types in one block). Built on the MultiLoader
+Template (zero external dependencies, Java ServiceLoader for platform
+abstraction). Targets Minecraft 1.21.1, Java 21.
+
+KEY DECISIONS
+-------------
+- Name: "Conduit" (community-standard, universally recognized)
+- Tiers: Enum-based (BASIC, ADVANCED, ELITE, ULTIMATE, CREATIVE) with
+  config-overridable values (Mekanism pattern)
+- Tier upgrading: Break and replace (no in-world alloy upgrading)
+- Multi-loader: MultiLoader Template (common/ + fabric/ + neoforge/)
+- Platform abstraction: Java ServiceLoader SPI
+- Capability bridge: Thin ITransferHelper<T> SPI in common/, implemented
+  per-platform (NeoForge BlockCapability / Fabric Transfer API)
+- Network architecture: Persistent graph-based (EnderIO pattern)
+- Bundle: Multiple conduit types in a single block (EnderIO pattern)
+
+================================================================================
+STEP 1: Initialize MultiLoader Template Project
+================================================================================
+Create the multi-project Gradle structure:
+
+  OmnIO/
+  ├── common/
+  │   └── src/main/java/com/trilon/omnio/
+  │       ├── Constants.java              (MOD_ID, mod name, logger)
+  │       ├── OmnIOCommon.java            (shared init logic)
+  │       └── platform/
+  │           └── IPlatformHelper.java    (ServiceLoader SPI interface)
+  ├── fabric/
+  │   └── src/main/java/com/trilon/omnio/fabric/
+  │       ├── OmnIOFabric.java            (ModInitializer entry point)
+  │       └── platform/
+  │           └── FabricPlatformHelper.java
+  ├── neoforge/
+  │   └── src/main/java/com/trilon/omnio/neoforge/
+  │       ├── OmnIONeoForge.java          (@Mod entry point)
+  │       └── platform/
+  │           └── NeoForgePlatformHelper.java
+  ├── build.gradle
+  ├── settings.gradle
+  ├── gradle.properties
+  ├── .gitignore
+  ├── LICENSE                             (MIT)
+  └── README.md
+
+Key config:
+- Minecraft 1.21.1
+- Java 21
+- NeoGradle for neoforge/, Fabric Loom for fabric/
+- common/ compiled against vanilla Minecraft (no loader APIs)
+- ServiceLoader SPI via META-INF/services/ files per platform
+- Initialize GitHub repo: git init, initial commit, create remote
+
+================================================================================
+STEP 2: Define the Tier System
+================================================================================
+Location: common/src/main/java/com/trilon/omnio/tier/
+
+Files:
+  BaseTier.java
+  -------------
+  public enum BaseTier implements StringRepresentable {
+      BASIC(0, "basic", ChatFormatting.GREEN),
+      ADVANCED(1, "advanced", ChatFormatting.RED),
+      ELITE(2, "elite", ChatFormatting.AQUA),
+      ULTIMATE(3, "ultimate", ChatFormatting.LIGHT_PURPLE),
+      CREATIVE(4, "creative", ChatFormatting.GOLD);
+  }
+
+  ITier.java
+  ----------
+  public interface ITier {
+      BaseTier getBaseTier();
+  }
+
+  Per-conduit-type tier enums:
+  ----------------------------
+  EnergyConduitTier implements ITier
+      BASIC:     capacity=8,000 FE,     transferRate=2,000 FE/t
+      ADVANCED:  capacity=128,000 FE,   transferRate=16,000 FE/t
+      ELITE:     capacity=1,024,000 FE, transferRate=128,000 FE/t
+      ULTIMATE:  capacity=8,192,000 FE, transferRate=1,024,000 FE/t
+      CREATIVE:  capacity=MAX,          transferRate=MAX
+
+  FluidConduitTier implements ITier
+      BASIC:     capacity=2,000 mB,     transferRate=500 mB/t
+      ADVANCED:  capacity=8,000 mB,     transferRate=2,000 mB/t
+      ELITE:     capacity=32,000 mB,    transferRate=8,000 mB/t
+      ULTIMATE:  capacity=128,000 mB,   transferRate=32,000 mB/t
+      CREATIVE:  capacity=MAX,          transferRate=MAX
+
+  ItemConduitTier implements ITier
+      BASIC:     stackSize=1,   speed=20 ticks
+      ADVANCED:  stackSize=8,   speed=15 ticks
+      ELITE:     stackSize=32,  speed=10 ticks
+      ULTIMATE:  stackSize=64,  speed=5 ticks
+      CREATIVE:  stackSize=64,  speed=1 tick
+
+  RedstoneConduitTier — single tier (no tiering for redstone)
+
+================================================================================
+STEP 3: Build the Conduit Type Registry and API
+================================================================================
+Location: common/src/main/java/com/trilon/omnio/api/
+
+  Public API interfaces (stable, for third-party addon mods):
+  api/
+  ├── conduit/
+  │   ├── IConduitType.java           Registry type key, codec, capability ID
+  │   ├── IConduit.java               Core conduit interface
+  │   ├── IConduitTicker.java         void tick(ServerLevel, conduit, network)
+  │   ├── IConduitNode.java           Position + connections + per-side config
+  │   └── IConduitNetwork.java        Graph accessors: nodes, edges, context
+  ├── connection/
+  │   ├── IConnectionConfig.java      Per-side settings
+  │   ├── ConnectionStatus.java       DISCONNECTED, CONNECTED_CONDUIT,
+  │   │                               CONNECTED_BLOCK, DISABLED
+  │   └── ConnectionConfigType.java   Typed config factory + codec
+  ├── network/
+  │   └── IConduitNetworkContext.java  Per-network mutable state
+  └── transfer/
+      └── ITransferHelper.java        Platform-neutral transfer abstraction
+
+  Registration (common):
+  OmnIORegistries.java — custom DeferredRegister for CONDUIT_TYPES
+  ConduitTypes.java    — registers ENERGY, FLUID, ITEM, REDSTONE
+
+================================================================================
+STEP 4: Implement the Bundle Block System
+================================================================================
+Location: common/src/main/java/com/trilon/omnio/content/conduit/
+
+  OmniConduitBlock.java         — single block for all conduit types
+  OmniConduitBlockEntity.java   — holds List<conduits>, Map<connections>, Map<nodes>
+  ConnectionContainer            — per-direction status/config/filter
+
+================================================================================
+STEP 5: Build the Graph-Based Network Layer
+================================================================================
+Location: common/src/main/java/com/trilon/omnio/content/conduit/network/
+
+  ConduitNetwork.java            — persistent graph (nodes + edges)
+  ConduitNodeImpl.java           — position, connections, per-side config
+  ConduitNetworkContext<T>.java  — per-network mutable state
+  ConduitNetworkSavedData.java   — persistence + ticking driver
+
+  Network lifecycle:
+  ON CONDUIT PLACED:  find neighbors → join/merge networks → check block endpoints
+  ON CONDUIT REMOVED: remove node → if split: BFS → split networks + redistribute
+  ON CHUNK UNLOAD:    mark nodes non-ticking, keep in graph
+
+================================================================================
+STEP 6: Implement Per-Type Tickers
+================================================================================
+Location: common/src/main/java/com/trilon/omnio/content/conduit/type/
+
+  energy/   — pool-and-distribute, tier-scaled buffer + transfer rate
+  fluid/    — rate-limited, optional fluid locking, tier-scaled
+  item/     — round-robin extraction, priority insertion, filters, tier-scaled
+  redstone/ — signal propagation with 16 channel colors
+
+================================================================================
+STEP 7: Create Rendering and Interaction Layer
+================================================================================
+  Model:    custom IUnbakedGeometry (NeoForge) / BakedModel (Fabric)
+  Shape:    per-conduit VoxelShape for hit detection
+  GUI:      ConduitMenu + ConduitScreen for connection config
+  Facades:  cosmetic block overlay
+
+================================================================================
+PROJECT PACKAGE STRUCTURE (COMPLETE)
+================================================================================
+
+com.trilon.omnio
+├── api                              [PUBLIC API — stable for addons]
+│   ├── conduit
+│   │   ├── IConduitType
+│   │   ├── IConduit
+│   │   ├── IConduitTicker
+│   │   ├── IConduitNode
+│   │   └── IConduitNetwork
+│   ├── connection
+│   │   ├── IConnectionConfig
+│   │   ├── ConnectionStatus
+│   │   └── ConnectionConfigType
+│   ├── network
+│   │   └── IConduitNetworkContext
+│   ├── tier
+│   │   ├── BaseTier
+│   │   └── ITier
+│   └── transfer
+│       └── ITransferHelper
+├── content                          [INTERNAL — implementation]
+│   └── conduit
+│       ├── OmniConduitBlock
+│       ├── OmniConduitBlockEntity
+│       ├── ConnectionContainer
+│       ├── bundle
+│       │   └── ConduitBundleData
+│       ├── network
+│       │   ├── ConduitNetwork
+│       │   ├── ConduitNodeImpl
+│       │   ├── ConduitNetworkContext
+│       │   └── ConduitNetworkSavedData
+│       └── type
+│           ├── energy
+│           │   ├── EnergyConduit
+│           │   ├── EnergyConduitTier
+│           │   ├── EnergyConduitTicker
+│           │   ├── EnergyConduitConnectionConfig
+│           │   └── EnergyConduitNetworkContext
+│           ├── fluid
+│           │   ├── FluidConduit
+│           │   ├── FluidConduitTier
+│           │   ├── FluidConduitTicker
+│           │   ├── FluidConduitConnectionConfig
+│           │   └── FluidConduitNetworkContext
+│           ├── item
+│           │   ├── ItemConduit
+│           │   ├── ItemConduitTier
+│           │   ├── ItemConduitTicker
+│           │   ├── ItemConduitConnectionConfig
+│           │   └── ItemConduitNodeData
+│           └── redstone
+│               ├── RedstoneConduit
+│               ├── RedstoneConduitTicker
+│               ├── RedstoneConduitConnectionConfig
+│               └── RedstoneConduitNetworkContext
+├── client
+│   ├── ConduitBundleRenderState
+│   ├── ConduitModelParts
+│   ├── ConduitShape
+│   ├── ConduitMenu
+│   └── ConduitScreen
+├── config
+│   └── TierConfig
+├── platform
+│   └── IPlatformHelper
+├── registry
+│   ├── OmnIORegistries
+│   ├── OmnIOBlocks
+│   ├── OmnIOBlockEntities
+│   ├── OmnIOItems
+│   ├── OmnIOMenuTypes
+│   ├── OmnIOCreativeTabs
+│   └── ConduitTypes
+├── Constants
+└── OmnIOCommon
+
+================================================================================
+IMPLEMENTATION ORDER
+================================================================================
+Phase 1:  Project skeleton + build system + GitHub
+Phase 2:  Tier system + conduit type registry
+Phase 3:  Bundle block + block entity (placement/removal, no transfer)
+Phase 4:  Network graph (formation, merge, split, persistence)
+Phase 5:  Energy conduit ticker (first working transfer type)
+Phase 6:  Fluid conduit ticker
+Phase 7:  Item conduit ticker
+Phase 8:  Redstone conduit ticker
+Phase 9:  Rendering (custom model, shapes, tier colors)
+Phase 10: GUI / menu (connection configuration)
+Phase 11: Facades
+Phase 12: Fabric platform implementation
+Phase 13: API stabilization + documentation for addons
+================================================================================
