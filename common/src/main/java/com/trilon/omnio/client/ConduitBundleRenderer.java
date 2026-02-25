@@ -36,15 +36,15 @@ public class ConduitBundleRenderer implements BlockEntityRenderer<OmniConduitBlo
     /** Small inset to prevent Z-fighting at block boundaries. Zero = flush for seamless connections. */
     private static final float FACE_INSET = 0.0f;
 
-    // EnderIO-style layered shading: dark shell → mid-tone → bright center
-    /** Border thickness for the mid-tone layer inset (block units). */
-    private static final float SHELL_1 = 0.040f;
-    /** Total inset for the bright center layer (block units). */
-    private static final float SHELL_2 = 0.070f;
+    // One shell box (frame) + per-face inner color quads painted on top
+    /** Border inset: how much the inner color quad is smaller than the full face on each edge. */
+    private static final float SHELL_BORDER = 0.045f;
+    /** Tiny outward nudge so color quads paint on top of shell without z-fighting. */
+    private static final float COLOR_NUDGE = 0.001f;
     /** Shell color: dark charcoal gray (RGB). Multiplied with bright shell texture. */
-    private static final float SHELL_R = 0.14f, SHELL_G = 0.14f, SHELL_B = 0.16f;
+    private static final float SHELL_R = 0.18f, SHELL_G = 0.18f, SHELL_B = 0.20f;
     /** Junction box color: slightly darker than shell for a subtle distinction. */
-    private static final float JUNCTION_R = 0.12f, JUNCTION_G = 0.12f, JUNCTION_B = 0.13f;
+    private static final float JUNCTION_R = 0.15f, JUNCTION_G = 0.15f, JUNCTION_B = 0.16f;
     /** Extra padding around the conduit bounding box for the junction (block units). */
     private static final float JUNCTION_PAD = 0.015f;
 
@@ -359,13 +359,12 @@ public class ConduitBundleRenderer implements BlockEntityRenderer<OmniConduitBlo
     }
 
     /**
-     * Renders a conduit segment with layered shading.
-     * Layer 0 (shell): textured shell sprite at the surface with checker corners.
-     * Layers 1-2 (mid, bright): animated flow sprite, nudged slightly outward
-     * so they paint on top of the shell. The bigger insets make the colored area
-     * smaller, and the darker mid-tone gives a visual depth illusion.
+     * Renders a conduit segment as one shell box (full frame with texture) plus
+     * per-face color quads painted on top. The color quads are inset by SHELL_BORDER
+     * so the shell texture is visible around the edges as a frame.
+     * No overlapping boxes → no z-fighting.
      *
-     * @param travelAxis the arm's travel axis ({@code null} for cores → inset all in-plane axes)
+     * @param travelAxis the arm's travel axis ({@code null} for cores → border all in-plane axes)
      */
     private void renderConduitSegment(PoseStack poseStack, VertexConsumer consumer,
                                        float x1, float y1, float z1,
@@ -375,105 +374,109 @@ public class ConduitBundleRenderer implements BlockEntityRenderer<OmniConduitBlo
                                        float su0, float sv0, float su1, float sv1,
                                        float fu0, float fv0, float fu1, float fv1,
                                        int light) {
+        // 1) Full shell box — provides the dark textured frame on all 6 faces
+        renderBox(poseStack, consumer, x1, y1, z1, x2, y2, z2,
+                SHELL_R, SHELL_G, SHELL_B, 1.0f,
+                su0, sv0, su1, sv1, light);
+
+        // 2) Per-face color quads — inset by border, nudged outward on top of the shell
         PoseStack.Pose pose = poseStack.last();
-        float eps = 0.001f; // small outward nudge so each layer paints on top of the previous
-        float midR = r * 0.30f, midG = g * 0.30f, midB = b * 0.30f; // darker mid-tone for depth illusion
+        float border = SHELL_BORDER;
+        float nudge = COLOR_NUDGE;
 
         for (Direction face : Direction.values()) {
             Direction.Axis faceAxis = face.getAxis();
-            int nx = face.getStepX(), ny = face.getStepY(), nz = face.getStepZ();
+            int step = face.getStepX() + face.getStepY() + face.getStepZ(); // -1 or +1
 
-            float[][] colors = {
-                { SHELL_R, SHELL_G, SHELL_B },
-                { midR, midG, midB },
-                { r, g, b }
-            };
-            float[] insets = { 0, SHELL_1, SHELL_2 };
+            // Face position, nudged outward
+            float fp;
+            switch (faceAxis) {
+                case X -> fp = (step > 0 ? x2 : x1) + step * nudge;
+                case Y -> fp = (step > 0 ? y2 : y1) + step * nudge;
+                case Z -> fp = (step > 0 ? z2 : z1) + step * nudge;
+                default -> { continue; }
+            }
 
-            for (int li = 0; li < 3; li++) {
-                float inset = insets[li];
-                // Each successive layer nudged outward so it paints on top
-                float nudge = li * eps;
-
-                // Pick UVs: shell layer uses textured shell sprite, inner layers use animated flow
-                float lu0, lv0, lu1, lv1;
-                if (li == 0) {
-                    lu0 = su0; lv0 = sv0; lu1 = su1; lv1 = sv1;
-                } else {
-                    lu0 = fu0; lv0 = fv0; lu1 = fu1; lv1 = fv1;
+            // In-plane axes with border inset
+            float aMin, aMax, bMin, bMax;
+            switch (faceAxis) {
+                case Y -> { // a=X, b=Z
+                    aMin = x1; aMax = x2; bMin = z1; bMax = z2;
+                    if (travelAxis == null || travelAxis != Direction.Axis.X) { aMin += border; aMax -= border; }
+                    if (travelAxis == null || travelAxis != Direction.Axis.Z) { bMin += border; bMax -= border; }
                 }
-
-                // In-plane bounds with inset (only on axes != travelAxis)
-                float lx1 = x1, ly1 = y1, lz1 = z1;
-                float lx2 = x2, ly2 = y2, lz2 = z2;
-
-                if (faceAxis != Direction.Axis.X && (travelAxis == null || travelAxis != Direction.Axis.X)) {
-                    lx1 += inset; lx2 -= inset;
+                case Z -> { // a=X, b=Y
+                    aMin = x1; aMax = x2; bMin = y1; bMax = y2;
+                    if (travelAxis == null || travelAxis != Direction.Axis.X) { aMin += border; aMax -= border; }
+                    if (travelAxis == null || travelAxis != Direction.Axis.Y) { bMin += border; bMax -= border; }
                 }
-                if (faceAxis != Direction.Axis.Y && (travelAxis == null || travelAxis != Direction.Axis.Y)) {
-                    ly1 += inset; ly2 -= inset;
+                case X -> { // a=Z, b=Y
+                    aMin = z1; aMax = z2; bMin = y1; bMax = y2;
+                    if (travelAxis == null || travelAxis != Direction.Axis.Z) { aMin += border; aMax -= border; }
+                    if (travelAxis == null || travelAxis != Direction.Axis.Y) { bMin += border; bMax -= border; }
                 }
-                if (faceAxis != Direction.Axis.Z && (travelAxis == null || travelAxis != Direction.Axis.Z)) {
-                    lz1 += inset; lz2 -= inset;
-                }
+                default -> { continue; }
+            }
 
-                // Skip if inset collapsed the face
-                if (faceAxis != Direction.Axis.X && lx1 >= lx2) continue;
-                if (faceAxis != Direction.Axis.Y && ly1 >= ly2) continue;
-                if (faceAxis != Direction.Axis.Z && lz1 >= lz2) continue;
+            // Skip if border collapsed the inner area
+            if (aMin >= aMax || bMin >= bMax) continue;
 
-                // Face position on its normal axis, nudged outward so inner layers paint on top
-                float fp;
-                switch (faceAxis) {
-                    case X -> fp = (nx > 0 ? x2 : x1) + nx * nudge;
-                    case Y -> fp = (ny > 0 ? y2 : y1) + ny * nudge;
-                    case Z -> fp = (nz > 0 ? z2 : z1) + nz * nudge;
-                    default -> fp = 0;
-                }
+            emitFaceQuad(consumer, pose, face, fp,
+                    aMin, aMax, bMin, bMax,
+                    r, g, b,
+                    fu0, fv0, fu1, fv1, light);
+        }
+    }
 
-                int cr = (int)(colors[li][0] * 255);
-                int cg = (int)(colors[li][1] * 255);
-                int cb = (int)(colors[li][2] * 255);
+    /**
+     * Emits a single quad on one face of a conduit.
+     * a/b are the two in-plane axes (the mapping depends on the face direction).
+     */
+    private void emitFaceQuad(VertexConsumer consumer, PoseStack.Pose pose,
+                              Direction face, float fp,
+                              float a1, float a2, float b1, float b2,
+                              float cr, float cg, float cb,
+                              float u0, float v0, float u1, float v1,
+                              int light) {
+        int ri = (int)(cr * 255), gi = (int)(cg * 255), bi = (int)(cb * 255);
+        float nx = face.getStepX(), ny = face.getStepY(), nz = face.getStepZ();
 
-                // Emit 4 vertices (CCW from outside)
-                switch (face) {
-                    case DOWN -> {
-                        vertex(consumer, pose, lx1, fp, lz2, cr, cg, cb, 255, lu0, lv1, light, 0, -1, 0);
-                        vertex(consumer, pose, lx1, fp, lz1, cr, cg, cb, 255, lu0, lv0, light, 0, -1, 0);
-                        vertex(consumer, pose, lx2, fp, lz1, cr, cg, cb, 255, lu1, lv0, light, 0, -1, 0);
-                        vertex(consumer, pose, lx2, fp, lz2, cr, cg, cb, 255, lu1, lv1, light, 0, -1, 0);
-                    }
-                    case UP -> {
-                        vertex(consumer, pose, lx1, fp, lz1, cr, cg, cb, 255, lu0, lv0, light, 0, 1, 0);
-                        vertex(consumer, pose, lx1, fp, lz2, cr, cg, cb, 255, lu0, lv1, light, 0, 1, 0);
-                        vertex(consumer, pose, lx2, fp, lz2, cr, cg, cb, 255, lu1, lv1, light, 0, 1, 0);
-                        vertex(consumer, pose, lx2, fp, lz1, cr, cg, cb, 255, lu1, lv0, light, 0, 1, 0);
-                    }
-                    case NORTH -> {
-                        vertex(consumer, pose, lx2, ly2, fp, cr, cg, cb, 255, lu1, lv0, light, 0, 0, -1);
-                        vertex(consumer, pose, lx2, ly1, fp, cr, cg, cb, 255, lu1, lv1, light, 0, 0, -1);
-                        vertex(consumer, pose, lx1, ly1, fp, cr, cg, cb, 255, lu0, lv1, light, 0, 0, -1);
-                        vertex(consumer, pose, lx1, ly2, fp, cr, cg, cb, 255, lu0, lv0, light, 0, 0, -1);
-                    }
-                    case SOUTH -> {
-                        vertex(consumer, pose, lx1, ly2, fp, cr, cg, cb, 255, lu0, lv0, light, 0, 0, 1);
-                        vertex(consumer, pose, lx1, ly1, fp, cr, cg, cb, 255, lu0, lv1, light, 0, 0, 1);
-                        vertex(consumer, pose, lx2, ly1, fp, cr, cg, cb, 255, lu1, lv1, light, 0, 0, 1);
-                        vertex(consumer, pose, lx2, ly2, fp, cr, cg, cb, 255, lu1, lv0, light, 0, 0, 1);
-                    }
-                    case WEST -> {
-                        vertex(consumer, pose, fp, ly2, lz1, cr, cg, cb, 255, lu0, lv0, light, -1, 0, 0);
-                        vertex(consumer, pose, fp, ly1, lz1, cr, cg, cb, 255, lu0, lv1, light, -1, 0, 0);
-                        vertex(consumer, pose, fp, ly1, lz2, cr, cg, cb, 255, lu1, lv1, light, -1, 0, 0);
-                        vertex(consumer, pose, fp, ly2, lz2, cr, cg, cb, 255, lu1, lv0, light, -1, 0, 0);
-                    }
-                    case EAST -> {
-                        vertex(consumer, pose, fp, ly2, lz2, cr, cg, cb, 255, lu0, lv0, light, 1, 0, 0);
-                        vertex(consumer, pose, fp, ly1, lz2, cr, cg, cb, 255, lu0, lv1, light, 1, 0, 0);
-                        vertex(consumer, pose, fp, ly1, lz1, cr, cg, cb, 255, lu1, lv1, light, 1, 0, 0);
-                        vertex(consumer, pose, fp, ly2, lz1, cr, cg, cb, 255, lu1, lv0, light, 1, 0, 0);
-                    }
-                }
+        switch (face) {
+            case DOWN -> { // Y-, in-plane: a=X, b=Z
+                vertex(consumer, pose, a1, fp, b2, ri, gi, bi, 255, u0, v1, light, nx, ny, nz);
+                vertex(consumer, pose, a1, fp, b1, ri, gi, bi, 255, u0, v0, light, nx, ny, nz);
+                vertex(consumer, pose, a2, fp, b1, ri, gi, bi, 255, u1, v0, light, nx, ny, nz);
+                vertex(consumer, pose, a2, fp, b2, ri, gi, bi, 255, u1, v1, light, nx, ny, nz);
+            }
+            case UP -> { // Y+, in-plane: a=X, b=Z
+                vertex(consumer, pose, a1, fp, b1, ri, gi, bi, 255, u0, v0, light, nx, ny, nz);
+                vertex(consumer, pose, a1, fp, b2, ri, gi, bi, 255, u0, v1, light, nx, ny, nz);
+                vertex(consumer, pose, a2, fp, b2, ri, gi, bi, 255, u1, v1, light, nx, ny, nz);
+                vertex(consumer, pose, a2, fp, b1, ri, gi, bi, 255, u1, v0, light, nx, ny, nz);
+            }
+            case NORTH -> { // Z-, in-plane: a=X, b=Y
+                vertex(consumer, pose, a2, b2, fp, ri, gi, bi, 255, u1, v0, light, nx, ny, nz);
+                vertex(consumer, pose, a2, b1, fp, ri, gi, bi, 255, u1, v1, light, nx, ny, nz);
+                vertex(consumer, pose, a1, b1, fp, ri, gi, bi, 255, u0, v1, light, nx, ny, nz);
+                vertex(consumer, pose, a1, b2, fp, ri, gi, bi, 255, u0, v0, light, nx, ny, nz);
+            }
+            case SOUTH -> { // Z+, in-plane: a=X, b=Y
+                vertex(consumer, pose, a1, b2, fp, ri, gi, bi, 255, u0, v0, light, nx, ny, nz);
+                vertex(consumer, pose, a1, b1, fp, ri, gi, bi, 255, u0, v1, light, nx, ny, nz);
+                vertex(consumer, pose, a2, b1, fp, ri, gi, bi, 255, u1, v1, light, nx, ny, nz);
+                vertex(consumer, pose, a2, b2, fp, ri, gi, bi, 255, u1, v0, light, nx, ny, nz);
+            }
+            case WEST -> { // X-, in-plane: a=Z, b=Y
+                vertex(consumer, pose, fp, b2, a1, ri, gi, bi, 255, u0, v0, light, nx, ny, nz);
+                vertex(consumer, pose, fp, b1, a1, ri, gi, bi, 255, u0, v1, light, nx, ny, nz);
+                vertex(consumer, pose, fp, b1, a2, ri, gi, bi, 255, u1, v1, light, nx, ny, nz);
+                vertex(consumer, pose, fp, b2, a2, ri, gi, bi, 255, u1, v0, light, nx, ny, nz);
+            }
+            case EAST -> { // X+, in-plane: a=Z, b=Y
+                vertex(consumer, pose, fp, b2, a2, ri, gi, bi, 255, u0, v0, light, nx, ny, nz);
+                vertex(consumer, pose, fp, b1, a2, ri, gi, bi, 255, u0, v1, light, nx, ny, nz);
+                vertex(consumer, pose, fp, b1, a1, ri, gi, bi, 255, u1, v1, light, nx, ny, nz);
+                vertex(consumer, pose, fp, b2, a1, ri, gi, bi, 255, u1, v0, light, nx, ny, nz);
             }
         }
     }
